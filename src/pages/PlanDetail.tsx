@@ -1,0 +1,345 @@
+import { useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import {
+  ArrowLeft,
+  Calendar,
+  MapPin,
+  User,
+  FileCheck,
+  Shield,
+  Upload,
+  History,
+  PenLine,
+  AlertCircle,
+} from 'lucide-react';
+import { usePlanStore } from '../store/usePlanStore';
+import { StatusBadge, EngineeringBadge } from '../components/StatusBadge';
+import ApprovalTimeline from '../components/ApprovalTimeline';
+import AttachmentList from '../components/AttachmentList';
+import RejectModal from '../components/RejectModal';
+import { formatDate, formatDateTime, daysUntil } from '../utils/dateUtils';
+
+export default function PlanDetail() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { getPlan, approveNode, rejectNode, uploadExpertReview, uploadDisclosure, user, getCurrentNode } = usePlanStore();
+
+  const plan = id ? getPlan(id) : undefined;
+  const [showReject, setShowReject] = useState(false);
+  const [showApprove, setShowApprove] = useState(false);
+  const [approveOpinion, setApproveOpinion] = useState('');
+  const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
+
+  if (!plan) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20">
+        <AlertCircle className="w-12 h-12 text-slate-300" />
+        <div className="mt-4 text-slate-500">方案不存在或已被删除</div>
+        <button
+          onClick={() => navigate('/plans')}
+          className="mt-4 text-sm text-brand-600 hover:text-brand-700"
+        >
+          返回方案列表
+        </button>
+      </div>
+    );
+  }
+
+  const currentNode = getCurrentNode(plan);
+  const days = daysUntil(plan.planStartDate);
+  const isUrgent = days <= 7;
+
+  const canAct = () => {
+    if (!currentNode) return false;
+    if (plan.status === 'disclosed') return false;
+    if (plan.status === 'draft') return false;
+    if (currentNode.role === '专家论证') return user.role === 'tech_lead' || user.role === 'project_manager';
+    const roleMap: Record<string, string> = {
+      '项目经理': 'project_manager',
+      '总监理工程师': 'supervisor',
+      '建设单位代表': 'owner_rep',
+      '项目技术负责人': 'tech_lead',
+    };
+    return roleMap[currentNode.role] === user.role;
+  };
+
+  const handleApprove = () => {
+    if (!pendingNodeId) return;
+    const opinion = approveOpinion.trim() || '审批通过。';
+    approveNode(plan.id, pendingNodeId, opinion);
+    setShowApprove(false);
+    setApproveOpinion('');
+    setPendingNodeId(null);
+  };
+
+  const handleReject = (opinion: string) => {
+    if (!pendingNodeId) return;
+    rejectNode(plan.id, pendingNodeId, opinion);
+    setShowReject(false);
+    setPendingNodeId(null);
+  };
+
+  const openApprove = (nodeId: string) => {
+    setPendingNodeId(nodeId);
+    setShowApprove(true);
+  };
+
+  const openReject = (nodeId: string) => {
+    setPendingNodeId(nodeId);
+    setShowReject(true);
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate(-1)}
+            className="p-1.5 rounded-md text-slate-500 hover:bg-white hover:text-slate-700 border border-transparent hover:border-slate-200 transition-all"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div>
+            <h2 className="text-xl font-bold text-slate-800">{plan.projectName}</h2>
+            <div className="mt-1 flex items-center gap-2 flex-wrap">
+              <EngineeringBadge type={plan.engineeringType} />
+              <StatusBadge status={plan.status} />
+              {isUrgent && plan.status !== 'disclosed' && (
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-md ${
+                  days < 0 ? 'bg-red-50 text-risk-red border border-red-200' : 'bg-orange-50 text-risk-orange border border-orange-200'
+                }`}>
+                  {days < 0 ? `已超期 ${Math.abs(days)} 天` : `距开工 ${days} 天`}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-5">
+        <div className="col-span-2 space-y-5">
+          <div className="bg-white rounded-lg border border-slate-200 shadow-card p-5">
+            <h3 className="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-2">
+              <FileCheck className="w-4 h-4 text-brand-600" />
+              方案基本信息
+            </h3>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
+              <div>
+                <div className="text-xs text-slate-500 mb-0.5">工程部位</div>
+                <div className="text-slate-800 flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                  {plan.location}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500 mb-0.5">计划施工日期</div>
+                <div className="text-slate-800 flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                  {formatDate(plan.planStartDate)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500 mb-0.5">规模参数</div>
+                <div className="text-slate-800">{plan.scaleParams}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500 mb-0.5">编制人</div>
+                <div className="text-slate-800 flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-slate-400" />
+                  {plan.authorName}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500 mb-0.5">创建时间</div>
+                <div className="text-slate-800">{formatDateTime(plan.createdAt)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500 mb-0.5">更新时间</div>
+                <div className="text-slate-800">{formatDateTime(plan.updatedAt)}</div>
+              </div>
+              <div className="col-span-2">
+                <div className="text-xs text-slate-500 mb-0.5">专家论证</div>
+                <div className="text-slate-800">
+                  {plan.needExpertReview
+                    ? plan.expertReviewDone
+                      ? <span className="text-risk-green">✓ 已完成专家论证</span>
+                      : <span className="text-risk-orange">⚠ 需组织专家论证（未完成）</span>
+                    : '无需专家论证'}
+                </div>
+              </div>
+              <div className="col-span-2">
+                <div className="text-xs text-slate-500 mb-0.5">安全交底</div>
+                <div className="text-slate-800">
+                  {plan.disclosureUploaded
+                    ? <span className="text-risk-green">✓ 交底记录已上传</span>
+                    : <span className="text-slate-500">交底记录暂未上传</span>}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg border border-slate-200 shadow-card p-5">
+            <h3 className="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-2">
+              <PenLine className="w-4 h-4 text-brand-600" />
+              审批流程
+            </h3>
+            <ApprovalTimeline nodes={plan.approvalNodes} />
+          </div>
+
+          {plan.modificationLogs.length > 0 && (
+            <div className="bg-white rounded-lg border border-slate-200 shadow-card p-5">
+              <h3 className="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                <History className="w-4 h-4 text-brand-600" />
+                修改记录
+              </h3>
+              <div className="space-y-3">
+                {plan.modificationLogs.map((log, idx) => (
+                  <div
+                    key={log.id}
+                    className="pl-4 border-l-2 border-slate-200 py-1"
+                    style={{ animationDelay: `${idx * 60}ms` }}
+                  >
+                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                      <span className="font-medium text-slate-700">{log.modifierName}</span>
+                      <span>·</span>
+                      <span>{formatDateTime(log.timestamp)}</span>
+                    </div>
+                    <div className="mt-1 text-sm text-slate-700">{log.description}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-5">
+          <div className="bg-white rounded-lg border border-slate-200 shadow-card p-5 sticky top-5">
+            <h3 className="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-2">
+              <Shield className="w-4 h-4 text-brand-600" />
+              审批操作
+            </h3>
+
+            {plan.status === 'draft' ? (
+              <div className="text-sm text-slate-500 py-4 text-center">
+                方案处于待编制状态，编制人可在方案列表中提交审核
+              </div>
+            ) : plan.status === 'disclosed' ? (
+              <div className="text-sm text-risk-green py-4 text-center bg-emerald-50 rounded-md">
+                ✓ 方案已完成全部流程并归档
+              </div>
+            ) : canAct() && currentNode ? (
+              <div className="space-y-3">
+                <div className="text-sm text-slate-600 bg-slate-50 rounded-md p-3 border border-slate-200">
+                  当前节点：<span className="font-medium text-slate-800">{currentNode.role}</span>
+                  <div className="mt-1 text-xs text-slate-500">处理人：{currentNode.userName}</div>
+                </div>
+
+                {currentNode.role === '专家论证' ? (
+                  <button
+                    onClick={() => uploadExpertReview(plan.id)}
+                    className="w-full px-4 py-2.5 text-sm font-medium text-white bg-brand-600 rounded-md hover:bg-brand-700 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <Upload className="w-4 h-4" />
+                    上传专家论证报告
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => openApprove(currentNode.id)}
+                      className="w-full px-4 py-2.5 text-sm font-medium text-white bg-risk-green rounded-md hover:bg-emerald-700 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <FileCheck className="w-4 h-4" />
+                      审批通过
+                    </button>
+                    <button
+                      onClick={() => openReject(currentNode.id)}
+                      className="w-full px-4 py-2.5 text-sm font-medium text-risk-red bg-white border border-red-200 rounded-md hover:bg-red-50 active:scale-[0.98] transition-all"
+                    >
+                      退回修改
+                    </button>
+                  </>
+                )}
+              </div>
+            ) : currentNode ? (
+              <div className="space-y-2 text-sm">
+                <div className="text-slate-600 bg-slate-50 rounded-md p-3 border border-slate-200">
+                  当前等待：<span className="font-medium text-slate-800">{currentNode.role}</span>
+                  <div className="mt-1 text-xs text-slate-500">处理人：{currentNode.userName}</div>
+                </div>
+                <div className="text-xs text-slate-400 text-center">您当前角色无权执行此节点审批</div>
+              </div>
+            ) : null}
+
+            {plan.status !== 'draft' &&
+              plan.status !== 'disclosed' &&
+              !plan.disclosureUploaded &&
+              (user.role === 'tech_lead' || user.role === 'project_manager') &&
+              plan.approvalNodes.filter((n) => n.action === 'pending' && n.role !== '专家论证').length === 0 &&
+              (!plan.needExpertReview || plan.expertReviewDone) && (
+                <div className="mt-4 pt-4 border-t border-slate-200">
+                  <button
+                    onClick={() => uploadDisclosure(plan.id)}
+                    className="w-full px-4 py-2.5 text-sm font-medium text-white bg-risk-orange rounded-md hover:bg-orange-600 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <Upload className="w-4 h-4" />
+                    上传安全交底记录
+                  </button>
+                </div>
+              )}
+          </div>
+
+          <div className="bg-white rounded-lg border border-slate-200 shadow-card p-5">
+            <h3 className="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-2">
+              <FileCheck className="w-4 h-4 text-brand-600" />
+              方案附件
+            </h3>
+            <AttachmentList attachments={plan.attachments} />
+          </div>
+        </div>
+      </div>
+
+      <RejectModal
+        open={showReject}
+        onClose={() => setShowReject(false)}
+        onConfirm={handleReject}
+      />
+
+      {showApprove && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 animate-fade-in">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md animate-fade-in-up">
+            <div className="px-5 py-4 border-b border-slate-200">
+              <h2 className="text-base font-semibold text-slate-800">审批通过</h2>
+            </div>
+            <div className="p-5">
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">审批意见（可选）</label>
+              <textarea
+                value={approveOpinion}
+                onChange={(e) => setApproveOpinion(e.target.value)}
+                rows={3}
+                placeholder="请填写审批意见..."
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 resize-none"
+              />
+              <div className="mt-2 text-xs text-slate-400">
+                您的签名将随审批意见一并记录。
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-slate-200 bg-slate-50 rounded-b-xl">
+              <button
+                onClick={() => { setShowApprove(false); setApproveOpinion(''); setPendingNodeId(null); }}
+                className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleApprove}
+                className="px-4 py-2 text-sm font-medium text-white bg-risk-green rounded-md hover:bg-emerald-700 active:scale-[0.98] transition-all"
+              >
+                确认通过
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
