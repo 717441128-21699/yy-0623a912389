@@ -29,6 +29,7 @@ export interface Plan {
   approvalNodes: ApprovalNode[];
   modificationLogs: ModificationLog[];
   lastRejection?: RejectionContext;
+  rejectionHistory: RejectionContext[];
   resubmitNote?: string;
 }
 
@@ -38,6 +39,7 @@ export interface RejectionContext {
   opinion: string;
   rejecterName: string;
   timestamp: string;
+  round: number;
 }
 
 export interface ApprovalNode {
@@ -69,6 +71,8 @@ export interface Attachment {
   fileSize: number;
   uploadedAt: string;
   category: AttachmentCategory;
+  version: number;
+  supersededAt?: string;
 }
 
 export interface User {

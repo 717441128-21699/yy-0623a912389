@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, ClipboardList, User, Building2, Bell, ChevronDown, Check } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, User, Building2, Bell, ChevronDown, Check, BarChart3 } from 'lucide-react';
 import { usePlanStore } from '../store/usePlanStore';
 
 export default function Layout() {
@@ -73,6 +73,20 @@ export default function Layout() {
           >
             <ClipboardList className="w-4 h-4" />
             方案台账
+          </NavLink>
+
+          <NavLink
+            to="/statistics"
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
+                isActive
+                  ? 'bg-brand-50 text-brand-700 font-medium'
+                  : 'text-slate-600 hover:bg-slate-50'
+              }`
+            }
+          >
+            <BarChart3 className="w-4 h-4" />
+            闭环统计
           </NavLink>
         </nav>
 

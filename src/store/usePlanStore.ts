@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Plan, PlanStatus, User, RiskItem, ApprovalNode, Attachment, PlanUpdateData, AttachmentCategory } from '../types';
+import type { Plan, PlanStatus, User, RiskItem, ApprovalNode, Attachment, PlanUpdateData, AttachmentCategory, EngineeringType } from '../types';
 import { mockPlans, currentUser, availableUsers } from '../data/mockPlans';
 import { daysUntil, generateId, now } from '../utils/dateUtils';
 
@@ -19,9 +19,10 @@ interface PlanState {
     expertIncomplete: number;
     disclosureMissing: number;
   };
-  addPlan: (plan: Omit<Plan, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'approvalNodes' | 'modificationLogs' | 'expertReviewDone' | 'disclosureUploaded' | 'attachments' | 'lastRejection' | 'resubmitNote'> & { attachments?: Attachment[] }) => string;
+  getStatistics: () => StatisticsData;
+  addPlan: (plan: Omit<Plan, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'approvalNodes' | 'modificationLogs' | 'expertReviewDone' | 'disclosureUploaded' | 'attachments' | 'lastRejection' | 'resubmitNote' | 'rejectionHistory'> & { attachments?: Attachment[] }) => string;
   updatePlan: (planId: string, data: PlanUpdateData, modifierName: string) => void;
-  addAttachment: (planId: string, fileMeta: Omit<Attachment, 'id' | 'uploadedAt'>) => void;
+  addAttachment: (planId: string, fileMeta: Omit<Attachment, 'id' | 'uploadedAt' | 'version' | 'supersededAt'>) => void;
   removeAttachment: (planId: string, attachmentId: string) => void;
   submitForReview: (planId: string, submitterName: string, resubmitNote?: string) => void;
   approveNode: (planId: string, nodeId: string, opinion: string, approverName: string) => void;
@@ -31,21 +32,32 @@ interface PlanState {
   getCurrentNode: (plan: Plan) => ApprovalNode | undefined;
 }
 
+export interface StatisticsData {
+  byType: { type: EngineeringType; count: number }[];
+  byNode: { node: string; count: number }[];
+  everRejected: number;
+  neverRejected: number;
+  missingExpertReview: number;
+  missingDisclosure: number;
+  byStatus: { status: PlanStatus; count: number }[];
+  total: number;
+}
+
 function determineStatus(nodes: ApprovalNode[], needExpert: boolean, expertDone: boolean, disclosed: boolean): PlanStatus {
   if (disclosed) return 'disclosed';
   const pending = nodes.find((n) => n.action === 'pending');
-  if (!pending) {
-    return disclosed ? 'disclosed' : 'pending_argument';
-  }
+  if (!pending) return 'pending_argument';
   if (pending.orderIndex === 0 && nodes.every((n) => n.action === 'pending' || (n.action === 'rejected' && n.orderIndex === 0))) {
-    const hasAnyApproved = nodes.some((n) => n.action === 'approved');
-    if (!hasAnyApproved) return 'draft';
+    if (!nodes.some((n) => n.action === 'approved')) return 'draft';
   }
   if (needExpert && !expertDone) {
-    const nextPending = nodes.find((n) => n.action === 'pending');
-    if (nextPending?.role === '专家论证') return 'pending_argument';
+    if (pending?.role === '专家论证') return 'pending_argument';
   }
   return 'pending_review';
+}
+
+function getCurrentRound(nodes: ApprovalNode[]): number {
+  return Math.max(...nodes.map((n) => n.round || 1), 1);
 }
 
 export const usePlanStore = create<PlanState>((set, get) => ({
@@ -63,61 +75,32 @@ export const usePlanStore = create<PlanState>((set, get) => ({
   getRiskItems: () => {
     const plans = get().plans;
     const risks: RiskItem[] = [];
-
     plans.forEach((plan) => {
       const days = daysUntil(plan.planStartDate);
-
       if (plan.needExpertReview && !plan.expertReviewDone && plan.status !== 'disclosed') {
         risks.push({
-          id: `r-exp-${plan.id}`,
-          planId: plan.id,
-          planName: plan.projectName,
-          type: 'expert_incomplete',
-          typeLabel: '专家论证未完成',
-          daysRemaining: days,
-          location: plan.location,
-          engineeringType: plan.engineeringType,
-          severity: days <= 7 ? 'high' : days <= 14 ? 'medium' : 'low',
+          id: `r-exp-${plan.id}`, planId: plan.id, planName: plan.projectName, type: 'expert_incomplete',
+          typeLabel: '专家论证未完成', daysRemaining: days, location: plan.location,
+          engineeringType: plan.engineeringType, severity: days <= 7 ? 'high' : days <= 14 ? 'medium' : 'low',
         });
       }
-
       if (plan.status === 'pending_review' && days <= 3) {
         risks.push({
-          id: `r-ovd-${plan.id}`,
-          planId: plan.id,
-          planName: plan.projectName,
-          type: 'approval_overdue',
-          typeLabel: days < 0 ? `审批已超期${Math.abs(days)}天` : `距离开工仅剩${days}天`,
-          daysRemaining: days,
-          location: plan.location,
-          engineeringType: plan.engineeringType,
-          severity: days < 0 ? 'high' : 'medium',
+          id: `r-ovd-${plan.id}`, planId: plan.id, planName: plan.projectName, type: 'approval_overdue',
+          typeLabel: days < 0 ? `审批已超期${Math.abs(days)}天` : `距离开工仅剩${days}天`, daysRemaining: days,
+          location: plan.location, engineeringType: plan.engineeringType, severity: days < 0 ? 'high' : 'medium',
         });
       }
-
-      if (
-        plan.status !== 'draft' &&
-        plan.status !== 'disclosed' &&
-        !plan.disclosureUploaded &&
-        days <= 5
-      ) {
-        const alreadyDisclosureRisk = risks.some((r) => r.planId === plan.id && r.type === 'disclosure_missing');
-        if (!alreadyDisclosureRisk) {
+      if (plan.status !== 'draft' && plan.status !== 'disclosed' && !plan.disclosureUploaded && days <= 5) {
+        if (!risks.some((r) => r.planId === plan.id && r.type === 'disclosure_missing')) {
           risks.push({
-            id: `r-dis-${plan.id}`,
-            planId: plan.id,
-            planName: plan.projectName,
-            type: 'disclosure_missing',
-            typeLabel: '交底记录未上传',
-            daysRemaining: days,
-            location: plan.location,
-            engineeringType: plan.engineeringType,
-            severity: days <= 2 ? 'high' : 'low',
+            id: `r-dis-${plan.id}`, planId: plan.id, planName: plan.projectName, type: 'disclosure_missing',
+            typeLabel: '交底记录未上传', daysRemaining: days, location: plan.location,
+            engineeringType: plan.engineeringType, severity: days <= 2 ? 'high' : 'low',
           });
         }
       }
     });
-
     return risks.sort((a, b) => a.daysRemaining - b.daysRemaining);
   },
 
@@ -133,26 +116,62 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     };
   },
 
+  getStatistics: () => {
+    const plans = get().plans;
+    const typeMap = new Map<EngineeringType, number>();
+    const nodeMap = new Map<string, number>();
+    const statusMap = new Map<PlanStatus, number>();
+    let everRejected = 0;
+    let neverRejected = 0;
+    let missingExpert = 0;
+    let missingDisclosure = 0;
+
+    plans.forEach((p) => {
+      typeMap.set(p.engineeringType, (typeMap.get(p.engineeringType) || 0) + 1);
+      statusMap.set(p.status, (statusMap.get(p.status) || 0) + 1);
+      if (p.rejectionHistory.length > 0) everRejected++; else neverRejected++;
+      if (p.needExpertReview && !p.expertReviewDone) missingExpert++;
+      if (p.status !== 'draft' && !p.disclosureUploaded) missingDisclosure++;
+
+      const pending = p.approvalNodes.find((n) => n.action === 'pending');
+      if (pending) {
+        const label = pending.role;
+        nodeMap.set(label, (nodeMap.get(label) || 0) + 1);
+      } else if (p.status === 'disclosed') {
+        nodeMap.set('已归档', (nodeMap.get('已归档') || 0) + 1);
+      }
+    });
+
+    return {
+      byType: Array.from(typeMap.entries()).map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count),
+      byNode: Array.from(nodeMap.entries()).map(([node, count]) => ({ node, count })).sort((a, b) => b.count - a.count),
+      everRejected,
+      neverRejected,
+      missingExpertReview: missingExpert,
+      missingDisclosure,
+      byStatus: Array.from(statusMap.entries()).map(([status, count]) => ({ status, count })),
+      total: plans.length,
+    };
+  },
+
   addPlan: (planData) => {
     const newId = generateId();
-    const currentRound = 1;
     const buildApprovalNodes = (needExpert: boolean) => {
       const base: ApprovalNode[] = [
-        { id: generateId(), planId: newId, role: '项目技术负责人', userName: planData.authorName, action: 'pending', orderIndex: 0, round: currentRound },
-        { id: generateId(), planId: newId, role: '项目经理', userName: '张建国', action: 'pending', orderIndex: 1, round: currentRound },
-        { id: generateId(), planId: newId, role: '总监理工程师', userName: '王监理', action: 'pending', orderIndex: 2, round: currentRound },
+        { id: generateId(), planId: newId, role: '项目技术负责人', userName: planData.authorName, action: 'pending', orderIndex: 0, round: 1 },
+        { id: generateId(), planId: newId, role: '项目经理', userName: '张建国', action: 'pending', orderIndex: 1, round: 1 },
+        { id: generateId(), planId: newId, role: '总监理工程师', userName: '王监理', action: 'pending', orderIndex: 2, round: 1 },
       ];
       if (needExpert) {
-        base.push({ id: generateId(), planId: newId, role: '专家论证', userName: '专家组', action: 'pending', orderIndex: 3, round: currentRound });
-        base.push({ id: generateId(), planId: newId, role: '建设单位代表', userName: '陈总', action: 'pending', orderIndex: 4, round: currentRound });
+        base.push({ id: generateId(), planId: newId, role: '专家论证', userName: '专家组', action: 'pending', orderIndex: 3, round: 1 });
+        base.push({ id: generateId(), planId: newId, role: '建设单位代表', userName: '陈总', action: 'pending', orderIndex: 4, round: 1 });
       } else {
-        base.push({ id: generateId(), planId: newId, role: '建设单位代表', userName: '陈总', action: 'pending', orderIndex: 3, round: currentRound });
+        base.push({ id: generateId(), planId: newId, role: '建设单位代表', userName: '陈总', action: 'pending', orderIndex: 3, round: 1 });
       }
       return base;
     };
-
     const newPlan: Plan = {
-      attachments: (planData.attachments || []).map((a) => ({ ...a, category: a.category || 'plan' as AttachmentCategory })),
+      attachments: (planData.attachments || []).map((a) => ({ ...a, category: a.category || 'plan' as AttachmentCategory, version: a.version || 1 })),
       ...planData,
       id: newId,
       status: 'draft',
@@ -162,6 +181,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
       disclosureUploaded: false,
       modificationLogs: [],
       approvalNodes: buildApprovalNodes(planData.needExpertReview),
+      rejectionHistory: [],
     };
     set((state) => ({ plans: [...state.plans, newPlan] }));
     return newId;
@@ -178,19 +198,10 @@ export const usePlanStore = create<PlanState>((set, get) => ({
         if (data.projectName && data.projectName !== p.projectName) changes.push(`工程名称改为"${data.projectName}"`);
         if (data.engineeringType && data.engineeringType !== p.engineeringType) changes.push(`工程类型从"${p.engineeringType}"改为"${data.engineeringType}"`);
         if (typeof data.needExpertReview === 'boolean' && data.needExpertReview !== p.needExpertReview) changes.push(data.needExpertReview ? '新增需专家论证要求' : '取消专家论证要求');
-        if (data.attachmentChanges && data.attachmentChanges.length > 0) {
-          changes.push(...data.attachmentChanges);
-        }
+        if (data.attachmentChanges && data.attachmentChanges.length > 0) changes.push(...data.attachmentChanges);
 
         const newLog = changes.length > 0
-          ? {
-              id: generateId(),
-              planId,
-              modifierName,
-              description: changes.join('；'),
-              timestamp: now(),
-              isResubmit: !!data.resubmitNote,
-            }
+          ? { id: generateId(), planId, modifierName, description: changes.join('；'), timestamp: now(), isResubmit: !!data.resubmitNote }
           : null;
 
         let approvalNodes = p.approvalNodes;
@@ -198,27 +209,18 @@ export const usePlanStore = create<PlanState>((set, get) => ({
           if (data.needExpertReview) {
             const supervisorIdx = approvalNodes.findIndex((n) => n.role === '总监理工程师');
             const ownerIdx = approvalNodes.findIndex((n) => n.role === '建设单位代表');
-            const expertNode: ApprovalNode = {
-              id: generateId(),
-              planId,
-              role: '专家论证',
-              userName: '专家组',
-              action: 'pending',
-              orderIndex: supervisorIdx + 1,
-            };
+            const expertNode: ApprovalNode = { id: generateId(), planId, role: '专家论证', userName: '专家组', action: 'pending', orderIndex: supervisorIdx + 1 };
             approvalNodes = [
               ...approvalNodes.slice(0, supervisorIdx + 1),
               expertNode,
               ...approvalNodes.slice(ownerIdx).map((n) => ({ ...n, orderIndex: n.orderIndex + 1 })),
             ];
           } else {
-            approvalNodes = approvalNodes
-              .filter((n) => n.role !== '专家论证')
-              .map((n, i) => ({ ...n, orderIndex: i }));
+            approvalNodes = approvalNodes.filter((n) => n.role !== '专家论证').map((n, i) => ({ ...n, orderIndex: i }));
           }
         }
 
-        const result: Plan = {
+        return {
           ...p,
           projectName: data.projectName ?? p.projectName,
           engineeringType: data.engineeringType ?? p.engineeringType,
@@ -232,7 +234,6 @@ export const usePlanStore = create<PlanState>((set, get) => ({
           resubmitNote: data.resubmitNote || p.resubmitNote,
           updatedAt: now(),
         };
-        return result;
       }),
     }));
   },
@@ -241,17 +242,27 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     set((state) => ({
       plans: state.plans.map((p) => {
         if (p.id !== planId) return p;
+        const existingWithSameName = p.attachments.filter(
+          (a) => a.fileName === fileMeta.fileName && a.category === fileMeta.category && !a.supersededAt
+        );
+        let version = 1;
+        let updatedAttachments = [...p.attachments];
+        if (existingWithSameName.length > 0) {
+          version = Math.max(...existingWithSameName.map((a) => a.version)) + 1;
+          updatedAttachments = updatedAttachments.map((a) =>
+            a.fileName === fileMeta.fileName && a.category === fileMeta.category && !a.supersededAt
+              ? { ...a, supersededAt: now() }
+              : a
+          );
+        }
         const newAtt: Attachment = {
           ...fileMeta,
           id: generateId(),
           uploadedAt: now(),
           category: fileMeta.category || 'plan',
+          version,
         };
-        return {
-          ...p,
-          attachments: [...p.attachments, newAtt],
-          updatedAt: now(),
-        };
+        return { ...p, attachments: [...updatedAttachments, newAtt], updatedAt: now() };
       }),
     }));
   },
@@ -260,11 +271,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     set((state) => ({
       plans: state.plans.map((p) => {
         if (p.id !== planId) return p;
-        return {
-          ...p,
-          attachments: p.attachments.filter((a) => a.id !== attachmentId),
-          updatedAt: now(),
-        };
+        return { ...p, attachments: p.attachments.filter((a) => a.id !== attachmentId), updatedAt: now() };
       }),
     }));
   },
@@ -273,17 +280,14 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     set((state) => ({
       plans: state.plans.map((p) => {
         if (p.id !== planId) return p;
-        const nextRound = (Math.max(...p.approvalNodes.map((n) => n.round || 1), 1)) + 1;
-
+        const nextRound = getCurrentRound(p.approvalNodes) + 1;
         const isResubmit = !!p.lastRejection;
         let nodes: ApprovalNode[];
 
         if (isResubmit && p.lastRejection) {
           const rejectOrderIndex = p.approvalNodes.find((n) => n.id === p.lastRejection!.nodeId)?.orderIndex ?? 1;
           nodes = p.approvalNodes.map((n) => {
-            if (n.orderIndex < rejectOrderIndex) {
-              return n;
-            }
+            if (n.orderIndex < rejectOrderIndex && n.action === 'approved') return n;
             if (n.id === p.lastRejection!.nodeId) {
               return { ...n, action: 'pending' as const, timestamp: undefined, signature: undefined, opinion: undefined, round: nextRound };
             }
@@ -292,7 +296,6 @@ export const usePlanStore = create<PlanState>((set, get) => ({
             }
             return n;
           });
-
           const techLeadNode = nodes.find((n) => n.role === '项目技术负责人');
           if (techLeadNode && techLeadNode.orderIndex < rejectOrderIndex) {
             nodes = nodes.map((n) =>
@@ -304,27 +307,13 @@ export const usePlanStore = create<PlanState>((set, get) => ({
         } else {
           nodes = p.approvalNodes.map((n, i) =>
             i === 0
-              ? {
-                  ...n,
-                  action: 'approved' as const,
-                  timestamp: now(),
-                  signature: submitterName,
-                  opinion: '方案编制完成，提交审核。',
-                  round: n.round || 1,
-                }
+              ? { ...n, action: 'approved' as const, timestamp: now(), signature: submitterName, opinion: '方案编制完成，提交审核。', round: n.round || 1 }
               : { ...n, round: n.round || 1 }
           );
         }
 
         const resubmitLog = isResubmit
-          ? {
-              id: generateId(),
-              planId: p.id,
-              modifierName: submitterName,
-              description: `修改后重新提交审核${resubmitNote ? '：' + resubmitNote : ''}`,
-              timestamp: now(),
-              isResubmit: true,
-            }
+          ? { id: generateId(), planId: p.id, modifierName: submitterName, description: `修改后重新提交审核${resubmitNote ? '：' + resubmitNote : ''}`, timestamp: now(), isResubmit: true }
           : null;
 
         return {
@@ -347,20 +336,11 @@ export const usePlanStore = create<PlanState>((set, get) => ({
       plans: state.plans.map((p) => {
         if (p.id !== planId) return p;
         const nodes = p.approvalNodes.map((n) =>
-          n.id === nodeId
-            ? { ...n, action: 'approved' as const, timestamp: now(), signature: approverName, opinion }
-            : n
+          n.id === nodeId ? { ...n, action: 'approved' as const, timestamp: now(), signature: approverName, opinion } : n
         );
         let expertReviewDone = p.expertReviewDone;
-        const approvedNode = p.approvalNodes.find((n) => n.id === nodeId);
-        if (approvedNode?.role === '专家论证') expertReviewDone = true;
-        return {
-          ...p,
-          approvalNodes: nodes,
-          status: determineStatus(nodes, p.needExpertReview, expertReviewDone, p.disclosureUploaded),
-          expertReviewDone,
-          updatedAt: now(),
-        };
+        if (p.approvalNodes.find((n) => n.id === nodeId)?.role === '专家论证') expertReviewDone = true;
+        return { ...p, approvalNodes: nodes, status: determineStatus(nodes, p.needExpertReview, expertReviewDone, p.disclosureUploaded), expertReviewDone, updatedAt: now() };
       }),
     }));
   },
@@ -371,6 +351,15 @@ export const usePlanStore = create<PlanState>((set, get) => ({
         if (p.id !== planId) return p;
         const rejectedNode = p.approvalNodes.find((n) => n.id === nodeId);
         const rejectOrder = rejectedNode?.orderIndex ?? 0;
+        const currentRound = getCurrentRound(p.approvalNodes);
+        const rejectionCtx = {
+          nodeId,
+          role: rejectedNode?.role || '项目经理',
+          opinion,
+          rejecterName,
+          timestamp: now(),
+          round: currentRound,
+        };
         const nodes = p.approvalNodes.map((n) =>
           n.id === nodeId
             ? { ...n, action: 'rejected' as const, timestamp: now(), signature: rejecterName, opinion }
@@ -378,25 +367,14 @@ export const usePlanStore = create<PlanState>((set, get) => ({
             ? n
             : { ...n, action: 'pending' as const, timestamp: undefined, signature: undefined, opinion: undefined }
         );
-        const newLog = {
-          id: generateId(),
-          planId: p.id,
-          modifierName: rejecterName,
-          description: `${rejectedNode?.role}退回修改：${opinion}`,
-          timestamp: now(),
-        };
+        const newLog = { id: generateId(), planId: p.id, modifierName: rejecterName, description: `${rejectedNode?.role}退回修改：${opinion}`, timestamp: now() };
         return {
           ...p,
           approvalNodes: nodes,
           status: 'draft' as PlanStatus,
           modificationLogs: [...p.modificationLogs, newLog],
-          lastRejection: {
-            nodeId,
-            role: rejectedNode?.role || '项目经理',
-            opinion,
-            rejecterName,
-            timestamp: now(),
-          },
+          lastRejection: rejectionCtx,
+          rejectionHistory: [...p.rejectionHistory, rejectionCtx],
           updatedAt: now(),
         };
       }),
@@ -409,23 +387,23 @@ export const usePlanStore = create<PlanState>((set, get) => ({
         if (p.id !== planId) return p;
         const expertNode = p.approvalNodes.find((n) => n.role === '专家论证');
         const nodes = expertNode
-          ? p.approvalNodes.map((n) =>
-              n.id === expertNode.id
-                ? { ...n, action: 'approved' as const, timestamp: now(), signature: '专家组', opinion: '专家论证通过。' }
-                : n
-            )
+          ? p.approvalNodes.map((n) => n.id === expertNode.id ? { ...n, action: 'approved' as const, timestamp: now(), signature: '专家组', opinion: '专家论证通过。' } : n)
           : p.approvalNodes;
-        const newAtt: Attachment | null = fileMeta
-          ? { ...fileMeta, id: generateId(), uploadedAt: now(), category: 'expert_review' }
-          : { id: generateId(), fileName: '专家论证报告.pdf', fileType: 'pdf', fileSize: 0, uploadedAt: now(), category: 'expert_review' as AttachmentCategory };
-        return {
-          ...p,
-          approvalNodes: nodes,
-          expertReviewDone: true,
-          attachments: [...p.attachments, newAtt],
-          status: determineStatus(nodes, true, true, p.disclosureUploaded),
-          updatedAt: now(),
-        };
+        const existingSameName = p.attachments.filter((a) => a.fileName === (fileMeta?.fileName || '专家论证报告.pdf') && a.category === 'expert_review' && !a.supersededAt);
+        let version = 1;
+        let updatedAttachments = [...p.attachments];
+        if (existingSameName.length > 0) {
+          version = Math.max(...existingSameName.map((a) => a.version)) + 1;
+          updatedAttachments = updatedAttachments.map((a) =>
+            a.fileName === (fileMeta?.fileName || '专家论证报告.pdf') && a.category === 'expert_review' && !a.supersededAt
+              ? { ...a, supersededAt: now() }
+              : a
+          );
+        }
+        const newAtt: Attachment = fileMeta
+          ? { ...fileMeta, id: generateId(), uploadedAt: now(), category: 'expert_review', version }
+          : { id: generateId(), fileName: '专家论证报告.pdf', fileType: 'pdf', fileSize: 0, uploadedAt: now(), category: 'expert_review', version };
+        return { ...p, approvalNodes: nodes, expertReviewDone: true, attachments: [...updatedAttachments, newAtt], status: determineStatus(nodes, true, true, p.disclosureUploaded), updatedAt: now() };
       }),
     }));
   },
@@ -434,23 +412,25 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     set((state) => ({
       plans: state.plans.map((p) => {
         if (p.id !== planId) return p;
+        const existingSameName = p.attachments.filter((a) => a.fileName === (fileMeta?.fileName || '安全交底记录.pdf') && a.category === 'disclosure' && !a.supersededAt);
+        let version = 1;
+        let updatedAttachments = [...p.attachments];
+        if (existingSameName.length > 0) {
+          version = Math.max(...existingSameName.map((a) => a.version)) + 1;
+          updatedAttachments = updatedAttachments.map((a) =>
+            a.fileName === (fileMeta?.fileName || '安全交底记录.pdf') && a.category === 'disclosure' && !a.supersededAt
+              ? { ...a, supersededAt: now() }
+              : a
+          );
+        }
         const newAtt: Attachment = fileMeta
-          ? { ...fileMeta, id: generateId(), uploadedAt: now(), category: 'disclosure' }
-          : { id: generateId(), fileName: '安全交底记录.pdf', fileType: 'pdf', fileSize: 0, uploadedAt: now(), category: 'disclosure' as AttachmentCategory };
+          ? { ...fileMeta, id: generateId(), uploadedAt: now(), category: 'disclosure', version }
+          : { id: generateId(), fileName: '安全交底记录.pdf', fileType: 'pdf', fileSize: 0, uploadedAt: now(), category: 'disclosure', version };
         const allApproved = p.approvalNodes.every((n) => n.action === 'approved' || n.role === '专家论证');
         const nodes = allApproved
           ? p.approvalNodes
-          : p.approvalNodes.map((n) =>
-              n.action === 'pending' ? { ...n, action: 'approved' as const, timestamp: now(), signature: uploaderName, opinion: '审批通过。' } : n
-            );
-        return {
-          ...p,
-          approvalNodes: nodes,
-          disclosureUploaded: true,
-          attachments: [...p.attachments, newAtt],
-          status: 'disclosed' as PlanStatus,
-          updatedAt: now(),
-        };
+          : p.approvalNodes.map((n) => n.action === 'pending' ? { ...n, action: 'approved' as const, timestamp: now(), signature: uploaderName, opinion: '审批通过。' } : n);
+        return { ...p, approvalNodes: nodes, disclosureUploaded: true, attachments: [...updatedAttachments, newAtt], status: 'disclosed' as PlanStatus, updatedAt: now() };
       }),
     }));
   },

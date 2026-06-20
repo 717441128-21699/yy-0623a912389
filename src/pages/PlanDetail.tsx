@@ -69,7 +69,8 @@ export default function PlanDetail() {
   const canUploadAttachments = isDraft;
   const isResubmit = !!plan.lastRejection;
 
-  const lastRejection = plan.lastRejection;
+  const hasRejectionHistory = plan.rejectionHistory.length > 0;
+  const latestRejection = plan.lastRejection || plan.rejectionHistory[plan.rejectionHistory.length - 1];
   const lastResubmitLog = [...plan.modificationLogs].reverse().find((l) => l.isResubmit);
   const recentChanges = [...plan.modificationLogs].reverse().find((l) => !l.description.includes('退回修改'));
 
@@ -225,22 +226,25 @@ export default function PlanDetail() {
         )}
       </div>
 
-      {lastRejection && (
-        <div className="bg-white rounded-lg border border-red-200 shadow-card p-5">
+      {hasRejectionHistory && latestRejection && (
+        <div className="bg-white rounded-lg border border-amber-200 shadow-card p-5">
           <h3 className="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-2">
-            <MessageSquare className="w-4 h-4 text-risk-red" />
+            <MessageSquare className="w-4 h-4 text-risk-orange" />
             审批意见对比
+            {plan.rejectionHistory.length > 1 && (
+              <span className="text-xs font-normal text-slate-400">共退回 {plan.rejectionHistory.length} 次</span>
+            )}
           </h3>
           <div className="grid grid-cols-3 gap-4">
             <div className="rounded-md border border-red-200 bg-red-50 p-3">
               <div className="text-xs font-semibold text-risk-red mb-2 flex items-center gap-1">
                 <RotateCcw className="w-3 h-3" />
-                退回意见
+                {isResubmit ? '退回意见' : '最近退回意见'}
               </div>
               <div className="text-xs text-slate-500 mb-1">
-                {lastRejection.rejecterName}（{lastRejection.role}）· {formatDateTime(lastRejection.timestamp)}
+                {latestRejection.rejecterName}（{latestRejection.role}）· 第{latestRejection.round}轮 · {formatDateTime(latestRejection.timestamp)}
               </div>
-              <div className="text-sm text-slate-800 mt-1">{lastRejection.opinion}</div>
+              <div className="text-sm text-slate-800 mt-1">{latestRejection.opinion}</div>
             </div>
             <div className="rounded-md border border-brand-200 bg-brand-50 p-3">
               <div className="text-xs font-semibold text-brand-700 mb-2 flex items-center gap-1">
@@ -250,7 +254,7 @@ export default function PlanDetail() {
               {lastResubmitLog ? (
                 <div className="text-sm text-slate-800">{lastResubmitLog.description}</div>
               ) : (
-                <div className="text-sm text-slate-400 italic">尚未重新提交</div>
+                <div className="text-sm text-slate-400 italic">{isResubmit ? '尚未重新提交' : '已修改后重新提交'}</div>
               )}
             </div>
             <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
@@ -265,6 +269,20 @@ export default function PlanDetail() {
               )}
             </div>
           </div>
+          {plan.rejectionHistory.length > 1 && (
+            <div className="mt-3 pt-3 border-t border-amber-100">
+              <div className="text-xs font-semibold text-slate-500 mb-2">历史退回记录</div>
+              <div className="space-y-1.5">
+                {plan.rejectionHistory.map((r, idx) => (
+                  <div key={idx} className="flex items-start gap-2 text-xs">
+                    <span className="text-slate-400 shrink-0">第{r.round}轮</span>
+                    <span className="text-slate-600">{r.rejecterName}（{r.role}）退回：{r.opinion}</span>
+                    <span className="text-slate-400 shrink-0">{formatDateTime(r.timestamp)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -374,9 +392,9 @@ export default function PlanDetail() {
               <div className="space-y-3">
                 <div className="text-sm text-slate-600 bg-slate-50 rounded-md p-3 border border-slate-200">
                   当前状态：<span className="font-medium text-slate-800">{isResubmit ? '退回修改中' : '待编制'}</span>
-                  {isResubmit && lastRejection && (
+                  {isResubmit && latestRejection && (
                     <div className="mt-1 text-xs text-risk-red">
-                      {lastRejection.role}退回：{lastRejection.opinion}
+                      {latestRejection.role}退回：{latestRejection.opinion}
                     </div>
                   )}
                   {!isResubmit && (
@@ -414,9 +432,9 @@ export default function PlanDetail() {
                   )}
                 </div>
 
-                {lastRejection && (
+                {hasRejectionHistory && latestRejection && (
                   <div className="text-xs bg-red-50 border border-red-100 rounded-md p-2.5 text-risk-red">
-                    上次退回：{lastRejection.opinion}
+                    上次退回：{latestRejection.opinion}
                   </div>
                 )}
 
@@ -482,6 +500,7 @@ export default function PlanDetail() {
             </h3>
             <AttachmentList
               attachments={plan.attachments}
+              planName={plan.projectName}
               canEdit={canUploadAttachments}
               onUpload={canUploadAttachments ? handleUploadAttachment : undefined}
               onRemove={canUploadAttachments ? handleRemoveAttachment : undefined}
@@ -531,7 +550,7 @@ export default function PlanDetail() {
 
       {showResubmit && (
         <ResubmitModal
-          rejection={lastRejection}
+          rejection={latestRejection}
           onConfirm={handleResubmit}
           onCancel={() => setShowResubmit(false)}
         />

@@ -49,8 +49,8 @@ export const mockPlans: Plan[] = [
     expertReviewDone: false,
     disclosureUploaded: false,
     attachments: [
-      { id: 'a001', fileName: '深基坑专项施工方案.pdf', fileType: 'pdf', fileSize: 2458624, uploadedAt: '2026-06-15T10:00:00Z', category: 'plan' },
-      { id: 'a002', fileName: '基坑支护计算书.xlsx', fileType: 'xlsx', fileSize: 512000, uploadedAt: '2026-06-15T10:15:00Z', category: 'plan' },
+      { id: 'a001', fileName: '深基坑专项施工方案.pdf', fileType: 'pdf', fileSize: 2458624, uploadedAt: '2026-06-15T10:00:00Z', category: 'plan', version: 1 },
+      { id: 'a002', fileName: '基坑支护计算书.xlsx', fileType: 'xlsx', fileSize: 512000, uploadedAt: '2026-06-15T10:15:00Z', category: 'plan', version: 1 },
     ],
     approvalNodes: [
       { id: 'n001', planId: 'p001', role: '项目技术负责人', userName: '李明华', action: 'approved', opinion: '方案已完成编制，计算书齐全，请项目经理审核。', signature: '李明华', timestamp: '2026-06-16T10:30:00Z', orderIndex: 0, round: 1 },
@@ -60,6 +60,7 @@ export const mockPlans: Plan[] = [
       { id: 'n005', planId: 'p001', role: '建设单位代表', userName: '陈总', action: 'pending', orderIndex: 4, round: 1 },
     ],
     modificationLogs: [],
+    rejectionHistory: [],
   },
   {
     id: 'p002',
@@ -76,7 +77,7 @@ export const mockPlans: Plan[] = [
     expertReviewDone: false,
     disclosureUploaded: false,
     attachments: [
-      { id: 'a003', fileName: '高支模专项方案V2.pdf', fileType: 'pdf', fileSize: 3124000, uploadedAt: '2026-06-18T16:00:00Z', category: 'plan' },
+      { id: 'a003', fileName: '高支模专项方案V2.pdf', fileType: 'pdf', fileSize: 3124000, uploadedAt: '2026-06-18T16:00:00Z', category: 'plan', version: 1 },
     ],
     approvalNodes: [
       { id: 'n006', planId: 'p002', role: '项目技术负责人', userName: '赵工', action: 'approved', opinion: '方案编制完成。', signature: '赵工', timestamp: '2026-06-11T09:00:00Z', orderIndex: 0, round: 1 },
@@ -88,6 +89,7 @@ export const mockPlans: Plan[] = [
     modificationLogs: [
       { id: 'm001', planId: 'p002', modifierName: '赵工', description: '根据监理意见补充了立杆稳定性验算内容', timestamp: '2026-06-18T16:00:00Z' },
     ],
+    rejectionHistory: [],
   },
   {
     id: 'p003',
@@ -104,8 +106,8 @@ export const mockPlans: Plan[] = [
     expertReviewDone: false,
     disclosureUploaded: true,
     attachments: [
-      { id: 'a004', fileName: '起重吊装专项方案.pdf', fileType: 'pdf', fileSize: 1850000, uploadedAt: '2026-05-20T10:00:00Z', category: 'plan' },
-      { id: 'a005', fileName: '安全交底记录.pdf', fileType: 'pdf', fileSize: 320000, uploadedAt: '2026-06-10T08:00:00Z', category: 'disclosure' },
+      { id: 'a004', fileName: '起重吊装专项方案.pdf', fileType: 'pdf', fileSize: 1850000, uploadedAt: '2026-05-20T10:00:00Z', category: 'plan', version: 1 },
+      { id: 'a005', fileName: '安全交底记录.pdf', fileType: 'pdf', fileSize: 320000, uploadedAt: '2026-06-10T08:00:00Z', category: 'disclosure', version: 1 },
     ],
     approvalNodes: [
       { id: 'n011', planId: 'p003', role: '项目技术负责人', userName: '刘工', action: 'approved', opinion: '方案编制完成。', signature: '刘工', timestamp: '2026-05-21T09:00:00Z', orderIndex: 0, round: 1 },
@@ -114,6 +116,7 @@ export const mockPlans: Plan[] = [
       { id: 'n014', planId: 'p003', role: '建设单位代表', userName: '陈总', action: 'approved', opinion: '建设单位确认。', signature: '陈总', timestamp: '2026-05-28T16:00:00Z', orderIndex: 3, round: 1 },
     ],
     modificationLogs: [],
+    rejectionHistory: [],
   },
   {
     id: 'p004',
@@ -138,6 +141,7 @@ export const mockPlans: Plan[] = [
       { id: 'n019', planId: 'p004', role: '建设单位代表', userName: '陈总', action: 'pending', orderIndex: 4, round: 1 },
     ],
     modificationLogs: [],
+    rejectionHistory: [],
   },
   {
     id: 'p005',
@@ -154,7 +158,7 @@ export const mockPlans: Plan[] = [
     expertReviewDone: false,
     disclosureUploaded: false,
     attachments: [
-      { id: 'a006', fileName: '拆除工程专项方案.pdf', fileType: 'pdf', fileSize: 1420000, uploadedAt: '2026-06-16T14:00:00Z', category: 'plan' },
+      { id: 'a006', fileName: '拆除工程专项方案.pdf', fileType: 'pdf', fileSize: 1420000, uploadedAt: '2026-06-16T14:00:00Z', category: 'plan', version: 1 },
     ],
     approvalNodes: [
       { id: 'n020', planId: 'p005', role: '项目技术负责人', userName: '孙工', action: 'approved', opinion: '方案重新修改后提交。', signature: '孙工', timestamp: '2026-06-16T14:00:00Z', orderIndex: 0, round: 2 },
@@ -167,6 +171,16 @@ export const mockPlans: Plan[] = [
       { id: 'm003', planId: 'p005', modifierName: '孙工', description: '工程部位从"1号楼临时建筑"改为"1号楼北侧临时建筑拆除"；新增附件"防护棚搭设方案.pdf"', timestamp: '2026-06-16T13:50:00Z', isResubmit: true },
     ],
     lastRejection: undefined,
+    rejectionHistory: [
+      {
+        nodeId: 'n021',
+        role: '项目经理',
+        opinion: '安全防护措施描述不详细，请补充拆除作业面防护棚方案及警戒范围图',
+        rejecterName: '张建国',
+        timestamp: '2026-06-14T10:00:00Z',
+        round: 1,
+      },
+    ],
   },
   {
     id: 'p006',
@@ -183,7 +197,7 @@ export const mockPlans: Plan[] = [
     expertReviewDone: false,
     disclosureUploaded: false,
     attachments: [
-      { id: 'a007', fileName: '地下车库高支模方案.pdf', fileType: 'pdf', fileSize: 2048000, uploadedAt: '2026-06-19T17:00:00Z', category: 'plan' },
+      { id: 'a007', fileName: '地下车库高支模方案.pdf', fileType: 'pdf', fileSize: 2048000, uploadedAt: '2026-06-19T17:00:00Z', category: 'plan', version: 1 },
     ],
     approvalNodes: [
       { id: 'n024', planId: 'p006', role: '项目技术负责人', userName: '赵工', action: 'approved', opinion: '方案编制完成。', signature: '赵工', timestamp: '2026-06-19T17:00:00Z', orderIndex: 0, round: 1 },
@@ -192,5 +206,6 @@ export const mockPlans: Plan[] = [
       { id: 'n027', planId: 'p006', role: '建设单位代表', userName: '陈总', action: 'pending', orderIndex: 3, round: 1 },
     ],
     modificationLogs: [],
+    rejectionHistory: [],
   },
 ];
