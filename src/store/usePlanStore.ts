@@ -242,13 +242,13 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     set((state) => ({
       plans: state.plans.map((p) => {
         if (p.id !== planId) return p;
-        const existingWithSameName = p.attachments.filter(
-          (a) => a.fileName === fileMeta.fileName && a.category === fileMeta.category && !a.supersededAt
+        const allWithName = p.attachments.filter(
+          (a) => a.fileName === fileMeta.fileName && a.category === fileMeta.category
         );
         let version = 1;
         let updatedAttachments = [...p.attachments];
-        if (existingWithSameName.length > 0) {
-          version = Math.max(...existingWithSameName.map((a) => a.version)) + 1;
+        if (allWithName.length > 0) {
+          version = Math.max(...allWithName.map((a) => a.version)) + 1;
           updatedAttachments = updatedAttachments.map((a) =>
             a.fileName === fileMeta.fileName && a.category === fileMeta.category && !a.supersededAt
               ? { ...a, supersededAt: now() }
@@ -271,7 +271,13 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     set((state) => ({
       plans: state.plans.map((p) => {
         if (p.id !== planId) return p;
-        return { ...p, attachments: p.attachments.filter((a) => a.id !== attachmentId), updatedAt: now() };
+        return {
+          ...p,
+          attachments: p.attachments.map((a) =>
+            a.id === attachmentId ? { ...a, supersededAt: a.supersededAt || now() } : a
+          ),
+          updatedAt: now(),
+        };
       }),
     }));
   },
@@ -286,24 +292,24 @@ export const usePlanStore = create<PlanState>((set, get) => ({
 
         if (isResubmit && p.lastRejection) {
           const rejectOrderIndex = p.approvalNodes.find((n) => n.id === p.lastRejection!.nodeId)?.orderIndex ?? 1;
-          nodes = p.approvalNodes.map((n) => {
-            if (n.orderIndex < rejectOrderIndex && n.action === 'approved') return n;
-            if (n.id === p.lastRejection!.nodeId) {
-              return { ...n, action: 'pending' as const, timestamp: undefined, signature: undefined, opinion: undefined, round: nextRound };
-            }
-            if (n.orderIndex > rejectOrderIndex) {
-              return { ...n, action: 'pending' as const, timestamp: undefined, signature: undefined, opinion: undefined, round: nextRound };
-            }
-            return n;
-          });
-          const techLeadNode = nodes.find((n) => n.role === '项目技术负责人');
+          const keptNodes = p.approvalNodes.filter((n) => n.orderIndex < rejectOrderIndex && n.action === 'approved');
+          const newNodes: ApprovalNode[] = [];
+          const techLeadNode = p.approvalNodes.find((n) => n.role === '项目技术负责人');
           if (techLeadNode && techLeadNode.orderIndex < rejectOrderIndex) {
-            nodes = nodes.map((n) =>
-              n.id === techLeadNode.id
-                ? { ...n, action: 'approved' as const, timestamp: now(), signature: submitterName, opinion: `修改后重新提交${resubmitNote ? '：' + resubmitNote : ''}`, round: n.round }
-                : n
-            );
+            newNodes.push({
+              id: generateId(), planId, role: '项目技术负责人', userName: techLeadNode.userName,
+              action: 'approved', timestamp: now(), signature: submitterName,
+              opinion: `修改后重新提交${resubmitNote ? '：' + resubmitNote : ''}`, orderIndex: 0, round: nextRound,
+            });
           }
+          const laterNodes = p.approvalNodes.filter((n) => n.orderIndex >= rejectOrderIndex);
+          laterNodes.forEach((n, i) => {
+            newNodes.push({
+              id: generateId(), planId, role: n.role, userName: n.userName,
+              action: 'pending', orderIndex: (techLeadNode && techLeadNode.orderIndex < rejectOrderIndex ? 1 : 0) + i, round: nextRound,
+            });
+          });
+          nodes = [...keptNodes, ...newNodes];
         } else {
           nodes = p.approvalNodes.map((n, i) =>
             i === 0
@@ -350,7 +356,6 @@ export const usePlanStore = create<PlanState>((set, get) => ({
       plans: state.plans.map((p) => {
         if (p.id !== planId) return p;
         const rejectedNode = p.approvalNodes.find((n) => n.id === nodeId);
-        const rejectOrder = rejectedNode?.orderIndex ?? 0;
         const currentRound = getCurrentRound(p.approvalNodes);
         const rejectionCtx = {
           nodeId,
@@ -363,9 +368,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
         const nodes = p.approvalNodes.map((n) =>
           n.id === nodeId
             ? { ...n, action: 'rejected' as const, timestamp: now(), signature: rejecterName, opinion }
-            : n.orderIndex < rejectOrder
-            ? n
-            : { ...n, action: 'pending' as const, timestamp: undefined, signature: undefined, opinion: undefined }
+            : n
         );
         const newLog = { id: generateId(), planId: p.id, modifierName: rejecterName, description: `${rejectedNode?.role}退回修改：${opinion}`, timestamp: now() };
         return {

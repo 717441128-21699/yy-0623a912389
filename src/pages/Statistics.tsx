@@ -5,7 +5,7 @@ import { usePlanStore } from '../store/usePlanStore';
 import type { EngineeringType, PlanStatus } from '../types';
 import { StatusBadge, EngineeringBadge } from '../components/StatusBadge';
 
-type FilterKey = 'type' | 'node' | 'rejected' | 'expert' | 'disclosure' | 'status';
+type FilterKey = 'type' | 'node' | 'rejected' | 'expert' | 'disclosure' | 'status' | 'all';
 
 const statusLabels: Record<PlanStatus, string> = {
   draft: '待编制',
@@ -26,6 +26,8 @@ export default function Statistics() {
   const getFilteredPlans = () => {
     if (!activeFilter) return [];
     switch (activeFilter) {
+      case 'all':
+        return plans;
       case 'type':
         return plans.filter((p) => p.engineeringType === filterValue);
       case 'node': {
@@ -39,7 +41,7 @@ export default function Statistics() {
       case 'disclosure':
         return plans.filter((p) => p.status !== 'draft' && !p.disclosureUploaded);
       case 'status':
-        return plans.filter((p) => p.status === filterValue);
+        return filterValue ? plans.filter((p) => p.status === filterValue) : plans;
       default:
         return [];
     }
@@ -57,6 +59,11 @@ export default function Statistics() {
     }
   };
 
+  const clearFilter = () => {
+    setActiveFilter(null);
+    setFilterValue('');
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -70,8 +77,8 @@ export default function Statistics() {
           label="方案总数"
           value={stats.total}
           color="blue"
-          active={activeFilter === 'status'}
-          onClick={() => handleFilterClick('status', '')}
+          active={activeFilter === 'all'}
+          onClick={() => handleFilterClick('all', '')}
         />
         <StatBlock
           icon={<RotateCcw className="w-5 h-5" />}
@@ -225,7 +232,7 @@ export default function Statistics() {
               筛选结果 · {filteredPlans.length} 个方案
             </h3>
             <button
-              onClick={() => { setActiveFilter(null); setFilterValue(''); }}
+              onClick={clearFilter}
               className="text-xs text-slate-500 hover:text-slate-700"
             >
               清除筛选
@@ -265,7 +272,7 @@ export default function Statistics() {
           <AlertTriangle className="w-8 h-8 text-slate-300 mx-auto mb-2" />
           <div className="text-sm text-slate-500">没有匹配的方案</div>
           <button
-            onClick={() => { setActiveFilter(null); setFilterValue(''); }}
+            onClick={clearFilter}
             className="mt-2 text-xs text-brand-600 hover:text-brand-700"
           >
             清除筛选

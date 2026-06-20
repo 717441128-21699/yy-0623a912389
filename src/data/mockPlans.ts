@@ -161,8 +161,10 @@ export const mockPlans: Plan[] = [
       { id: 'a006', fileName: '拆除工程专项方案.pdf', fileType: 'pdf', fileSize: 1420000, uploadedAt: '2026-06-16T14:00:00Z', category: 'plan', version: 1 },
     ],
     approvalNodes: [
+      { id: 'n020r1', planId: 'p005', role: '项目技术负责人', userName: '孙工', action: 'approved', opinion: '方案编制完成。', signature: '孙工', timestamp: '2026-06-10T09:00:00Z', orderIndex: 0, round: 1 },
+      { id: 'n021', planId: 'p005', role: '项目经理', userName: '张建国', action: 'rejected', opinion: '安全防护措施描述不详细，请补充拆除作业面防护棚方案及警戒范围图', signature: '张建国', timestamp: '2026-06-14T10:00:00Z', orderIndex: 1, round: 1 },
       { id: 'n020', planId: 'p005', role: '项目技术负责人', userName: '孙工', action: 'approved', opinion: '方案重新修改后提交。', signature: '孙工', timestamp: '2026-06-16T14:00:00Z', orderIndex: 0, round: 2 },
-      { id: 'n021', planId: 'p005', role: '项目经理', userName: '张建国', action: 'pending', orderIndex: 1, round: 2 },
+      { id: 'n021r2', planId: 'p005', role: '项目经理', userName: '张建国', action: 'pending', orderIndex: 1, round: 2 },
       { id: 'n022', planId: 'p005', role: '总监理工程师', userName: '王监理', action: 'pending', orderIndex: 2, round: 2 },
       { id: 'n023', planId: 'p005', role: '建设单位代表', userName: '陈总', action: 'pending', orderIndex: 3, round: 2 },
     ],

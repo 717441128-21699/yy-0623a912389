@@ -75,16 +75,34 @@ export default function AttachmentList({ attachments, planName, onUpload, onRemo
     lines.push(`生成时间：${formatDateTime(new Date().toISOString())}`);
     lines.push('');
     const cats: AttachmentCategory[] = ['plan', 'expert_review', 'disclosure'];
+    let totalActive = 0;
+    let totalArchived = 0;
     cats.forEach((cat) => {
-      const items = grouped[cat];
-      if (items.length === 0) return;
+      const activeItems = attachments.filter((a) => a.category === cat && !a.supersededAt);
+      const archivedItems = attachments.filter((a) => a.category === cat && a.supersededAt);
+      if (activeItems.length === 0 && archivedItems.length === 0) return;
       lines.push(`【${categoryConfig[cat].label}】`);
-      items.forEach((att, i) => {
-        lines.push(`  ${i + 1}. ${att.fileName}${att.version > 1 ? ` (V${att.version})` : ''} - ${formatFileSize(att.fileSize)} - ${formatDateTime(att.uploadedAt)}`);
-      });
       lines.push('');
+      if (activeItems.length > 0) {
+        lines.push('  ▶ 当前有效版本：');
+        activeItems.forEach((att, i) => {
+          const verLabel = att.version > 1 ? ` V${att.version}` : '';
+          lines.push(`    ${i + 1}. ${att.fileName}${verLabel} - ${formatFileSize(att.fileSize)} - ${formatDateTime(att.uploadedAt)} [当前版]`);
+        });
+        totalActive += activeItems.length;
+        lines.push('');
+      }
+      if (archivedItems.length > 0) {
+        lines.push('  ◼ 已归档历史版本：');
+        archivedItems.forEach((att, i) => {
+          lines.push(`    ${i + 1}. ${att.fileName} V${att.version} - ${formatFileSize(att.fileSize)} - ${formatDateTime(att.uploadedAt)} [历史版，被替换于 ${formatDateTime(att.supersededAt!)}]`);
+        });
+        totalArchived += archivedItems.length;
+        lines.push('');
+      }
     });
-    lines.push(`合计：${activeAttachments.length} 个文件`);
+    lines.push('────────────────────────');
+    lines.push(`合计：${totalActive} 个当前有效文件，${totalArchived} 个已归档历史版本`);
     return lines.join('\n');
   };
 
