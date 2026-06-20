@@ -1,12 +1,37 @@
 import type { Plan, User } from '../types';
 
-export const currentUser: User = {
-  id: 'u001',
-  name: '张建国',
-  role: 'project_manager',
-  roleName: '项目经理',
-  organization: '华建集团第一工程公司',
-};
+export const availableUsers: User[] = [
+  {
+    id: 'u001',
+    name: '李明华',
+    role: 'tech_lead',
+    roleName: '项目技术负责人',
+    organization: '华建集团第一工程公司 技术部',
+  },
+  {
+    id: 'u002',
+    name: '张建国',
+    role: 'project_manager',
+    roleName: '项目经理',
+    organization: '华建集团第一工程公司',
+  },
+  {
+    id: 'u003',
+    name: '王监理',
+    role: 'supervisor',
+    roleName: '总监理工程师',
+    organization: '诚信工程监理有限公司',
+  },
+  {
+    id: 'u004',
+    name: '陈总',
+    role: 'owner_rep',
+    roleName: '建设单位代表',
+    organization: '滨江置业发展有限公司',
+  },
+];
+
+export const currentUser: User = availableUsers[1];
 
 export const mockPlans: Plan[] = [
   {

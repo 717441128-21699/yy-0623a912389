@@ -3,12 +3,18 @@ import { ClipboardList, Clock, AlertTriangle, FileCheck, Users, Plus, ChevronRig
 import { usePlanStore } from '../store/usePlanStore';
 import StatCard from '../components/StatCard';
 import RiskItemCard from '../components/RiskItemCard';
-import NewPlanModal from '../components/NewPlanModal';
+import PlanForm, { type PlanFormData } from '../components/PlanForm';
 import { useState } from 'react';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { getStats, getRiskItems, plans } = usePlanStore();
+  const plans = usePlanStore((s) => s.plans);
+  const getStats = usePlanStore((s) => s.getStats);
+  const getRiskItems = usePlanStore((s) => s.getRiskItems);
+  const addPlan = usePlanStore((s) => s.addPlan);
+  const addAttachment = usePlanStore((s) => s.addAttachment);
+  const user = usePlanStore((s) => s.user);
+
   const stats = getStats();
   const riskItems = getRiskItems();
   const [showNewPlan, setShowNewPlan] = useState(false);
@@ -23,12 +29,31 @@ export default function Dashboard() {
     { key: 'disclosure', title: '交底记录未上传', items: disclosureRisks, color: 'risk-yellow', icon: FileCheck },
   ];
 
+  const handleNewPlan = (data: PlanFormData) => {
+    const newPlanId = addPlan({
+      projectName: data.projectName,
+      engineeringType: data.engineeringType,
+      location: data.location,
+      scaleParams: data.scaleParams,
+      planStartDate: data.planStartDate,
+      authorName: data.authorName,
+      needExpertReview: data.needExpertReview,
+    });
+    data.attachments.forEach((att) => {
+      addAttachment(newPlanId, { fileName: att.fileName, fileType: att.fileType, fileSize: att.fileSize });
+    });
+    setShowNewPlan(false);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-slate-800">提醒看板</h2>
-          <p className="mt-1 text-sm text-slate-500">按开工日期倒排，实时追踪危大工程方案进度</p>
+          <p className="mt-1 text-sm text-slate-500">
+            按开工日期倒排，实时追踪危大工程方案进度
+            <span className="ml-2 text-xs text-slate-400">当前身份：{user.roleName}</span>
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -130,7 +155,14 @@ export default function Dashboard() {
         })}
       </div>
 
-      <NewPlanModal open={showNewPlan} onClose={() => setShowNewPlan(false)} />
+      {showNewPlan && (
+        <PlanForm
+          title="新建方案"
+          submitLabel="创建方案"
+          onSubmit={handleNewPlan}
+          onCancel={() => setShowNewPlan(false)}
+        />
+      )}
     </div>
   );
 }

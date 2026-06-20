@@ -11,22 +11,37 @@ import {
   History,
   PenLine,
   AlertCircle,
+  Edit2,
+  Send,
 } from 'lucide-react';
 import { usePlanStore } from '../store/usePlanStore';
 import { StatusBadge, EngineeringBadge } from '../components/StatusBadge';
 import ApprovalTimeline from '../components/ApprovalTimeline';
 import AttachmentList from '../components/AttachmentList';
 import RejectModal from '../components/RejectModal';
+import PlanForm, { type PlanFormData } from '../components/PlanForm';
+import type { Attachment } from '../types';
 import { formatDate, formatDateTime, daysUntil } from '../utils/dateUtils';
 
 export default function PlanDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { getPlan, approveNode, rejectNode, uploadExpertReview, uploadDisclosure, user, getCurrentNode } = usePlanStore();
 
-  const plan = id ? getPlan(id) : undefined;
+  const plan = usePlanStore((s) => (id ? s.getPlan(id) : undefined));
+  const user = usePlanStore((s) => s.user);
+  const getCurrentNode = usePlanStore((s) => s.getCurrentNode);
+  const approveNode = usePlanStore((s) => s.approveNode);
+  const rejectNode = usePlanStore((s) => s.rejectNode);
+  const uploadExpertReview = usePlanStore((s) => s.uploadExpertReview);
+  const uploadDisclosure = usePlanStore((s) => s.uploadDisclosure);
+  const submitForReview = usePlanStore((s) => s.submitForReview);
+  const addAttachment = usePlanStore((s) => s.addAttachment);
+  const removeAttachment = usePlanStore((s) => s.removeAttachment);
+  const updatePlan = usePlanStore((s) => s.updatePlan);
+
   const [showReject, setShowReject] = useState(false);
   const [showApprove, setShowApprove] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   const [approveOpinion, setApproveOpinion] = useState('');
   const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
 
@@ -35,10 +50,7 @@ export default function PlanDetail() {
       <div className="flex flex-col items-center justify-center py-20">
         <AlertCircle className="w-12 h-12 text-slate-300" />
         <div className="mt-4 text-slate-500">方案不存在或已被删除</div>
-        <button
-          onClick={() => navigate('/plans')}
-          className="mt-4 text-sm text-brand-600 hover:text-brand-700"
-        >
+        <button onClick={() => navigate('/plans')} className="mt-4 text-sm text-brand-600 hover:text-brand-700">
           返回方案列表
         </button>
       </div>
@@ -48,11 +60,13 @@ export default function PlanDetail() {
   const currentNode = getCurrentNode(plan);
   const days = daysUntil(plan.planStartDate);
   const isUrgent = days <= 7;
+  const isDraft = plan.status === 'draft';
+  const isDisclosed = plan.status === 'disclosed';
+  const canEditDraft = isDraft;
+  const canUploadAttachments = isDraft;
 
   const canAct = () => {
-    if (!currentNode) return false;
-    if (plan.status === 'disclosed') return false;
-    if (plan.status === 'draft') return false;
+    if (!currentNode || isDisclosed || isDraft) return false;
     if (currentNode.role === '专家论证') return user.role === 'tech_lead' || user.role === 'project_manager';
     const roleMap: Record<string, string> = {
       '项目经理': 'project_manager',
@@ -63,10 +77,18 @@ export default function PlanDetail() {
     return roleMap[currentNode.role] === user.role;
   };
 
+  const canUploadDisclosure =
+    !isDraft &&
+    !isDisclosed &&
+    !plan.disclosureUploaded &&
+    (user.role === 'tech_lead' || user.role === 'project_manager') &&
+    plan.approvalNodes.filter((n) => n.action === 'pending' && n.role !== '专家论证').length === 0 &&
+    (!plan.needExpertReview || plan.expertReviewDone);
+
   const handleApprove = () => {
     if (!pendingNodeId) return;
     const opinion = approveOpinion.trim() || '审批通过。';
-    approveNode(plan.id, pendingNodeId, opinion);
+    approveNode(plan.id, pendingNodeId, opinion, user.name);
     setShowApprove(false);
     setApproveOpinion('');
     setPendingNodeId(null);
@@ -74,7 +96,7 @@ export default function PlanDetail() {
 
   const handleReject = (opinion: string) => {
     if (!pendingNodeId) return;
-    rejectNode(plan.id, pendingNodeId, opinion);
+    rejectNode(plan.id, pendingNodeId, opinion, user.name);
     setShowReject(false);
     setPendingNodeId(null);
   };
@@ -89,9 +111,45 @@ export default function PlanDetail() {
     setShowReject(true);
   };
 
+  const handleUploadAttachment = (fileMeta: { fileName: string; fileType: string; fileSize: number }) => {
+    addAttachment(plan.id, fileMeta);
+  };
+
+  const handleRemoveAttachment = (attId: string) => {
+    if (confirm('确定移除该附件？')) removeAttachment(plan.id, attId);
+  };
+
+  const handleEditSubmit = (originalAtts: Attachment[], data: PlanFormData) => {
+    updatePlan(
+      plan.id,
+      {
+        projectName: data.projectName,
+        engineeringType: data.engineeringType,
+        location: data.location,
+        scaleParams: data.scaleParams,
+        planStartDate: data.planStartDate,
+        needExpertReview: data.needExpertReview,
+      },
+      user.name
+    );
+    const existingNames = new Set(originalAtts.map((a) => a.fileName));
+    data.attachments.forEach((att) => {
+      if (!existingNames.has(att.fileName)) {
+        addAttachment(plan.id, { fileName: att.fileName, fileType: att.fileType, fileSize: att.fileSize });
+      }
+    });
+    setShowEdit(false);
+  };
+
+  const handleSubmit = () => {
+    if (confirm('确认提交审核？提交后将进入审批流程。')) {
+      submitForReview(plan.id, plan.authorName);
+    }
+  };
+
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate(-1)}
@@ -104,16 +162,38 @@ export default function PlanDetail() {
             <div className="mt-1 flex items-center gap-2 flex-wrap">
               <EngineeringBadge type={plan.engineeringType} />
               <StatusBadge status={plan.status} />
-              {isUrgent && plan.status !== 'disclosed' && (
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-md ${
-                  days < 0 ? 'bg-red-50 text-risk-red border border-red-200' : 'bg-orange-50 text-risk-orange border border-orange-200'
-                }`}>
+              {isUrgent && !isDisclosed && (
+                <span
+                  className={`text-xs font-medium px-2 py-0.5 rounded-md ${
+                    days < 0
+                      ? 'bg-red-50 text-risk-red border border-red-200'
+                      : 'bg-orange-50 text-risk-orange border border-orange-200'
+                  }`}
+                >
                   {days < 0 ? `已超期 ${Math.abs(days)} 天` : `距开工 ${days} 天`}
                 </span>
               )}
             </div>
           </div>
         </div>
+        {isDraft && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowEdit(true)}
+              className="px-3 py-1.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-colors flex items-center gap-1.5"
+            >
+              <Edit2 className="w-4 h-4" />
+              编辑方案
+            </button>
+            <button
+              onClick={handleSubmit}
+              className="px-3 py-1.5 text-sm font-medium text-white bg-brand-600 rounded-md hover:bg-brand-700 active:scale-[0.98] transition-all flex items-center gap-1.5"
+            >
+              <Send className="w-4 h-4" />
+              提交审核
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-5">
@@ -194,11 +274,7 @@ export default function PlanDetail() {
               </h3>
               <div className="space-y-3">
                 {plan.modificationLogs.map((log, idx) => (
-                  <div
-                    key={log.id}
-                    className="pl-4 border-l-2 border-slate-200 py-1"
-                    style={{ animationDelay: `${idx * 60}ms` }}
-                  >
+                  <div key={log.id} className="pl-4 border-l-2 border-slate-200 py-1" style={{ animationDelay: `${idx * 60}ms` }}>
                     <div className="flex items-center gap-2 text-xs text-slate-500">
                       <span className="font-medium text-slate-700">{log.modifierName}</span>
                       <span>·</span>
@@ -219,11 +295,21 @@ export default function PlanDetail() {
               审批操作
             </h3>
 
-            {plan.status === 'draft' ? (
-              <div className="text-sm text-slate-500 py-4 text-center">
-                方案处于待编制状态，编制人可在方案列表中提交审核
+            {isDraft ? (
+              <div className="space-y-3">
+                <div className="text-sm text-slate-600 bg-slate-50 rounded-md p-3 border border-slate-200">
+                  当前状态：<span className="font-medium text-slate-800">待编制</span>
+                  <div className="mt-1 text-xs text-slate-500">可编辑方案内容并提交审核</div>
+                </div>
+                <button
+                  onClick={handleSubmit}
+                  className="w-full px-4 py-2.5 text-sm font-medium text-white bg-brand-600 rounded-md hover:bg-brand-700 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Send className="w-4 h-4" />
+                  提交审核
+                </button>
               </div>
-            ) : plan.status === 'disclosed' ? (
+            ) : isDisclosed ? (
               <div className="text-sm text-risk-green py-4 text-center bg-emerald-50 rounded-md">
                 ✓ 方案已完成全部流程并归档
               </div>
@@ -236,7 +322,7 @@ export default function PlanDetail() {
 
                 {currentNode.role === '专家论证' ? (
                   <button
-                    onClick={() => uploadExpertReview(plan.id)}
+                    onClick={() => uploadExpertReview(plan.id, user.name)}
                     className="w-full px-4 py-2.5 text-sm font-medium text-white bg-brand-600 rounded-md hover:bg-brand-700 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
                   >
                     <Upload className="w-4 h-4" />
@@ -266,43 +352,42 @@ export default function PlanDetail() {
                   当前等待：<span className="font-medium text-slate-800">{currentNode.role}</span>
                   <div className="mt-1 text-xs text-slate-500">处理人：{currentNode.userName}</div>
                 </div>
-                <div className="text-xs text-slate-400 text-center">您当前角色无权执行此节点审批</div>
+                <div className="text-xs text-slate-400 text-center">
+                  当前身份「{user.roleName}」暂无此节点审批权限，可在左下角切换身份。
+                </div>
               </div>
             ) : null}
 
-            {plan.status !== 'draft' &&
-              plan.status !== 'disclosed' &&
-              !plan.disclosureUploaded &&
-              (user.role === 'tech_lead' || user.role === 'project_manager') &&
-              plan.approvalNodes.filter((n) => n.action === 'pending' && n.role !== '专家论证').length === 0 &&
-              (!plan.needExpertReview || plan.expertReviewDone) && (
-                <div className="mt-4 pt-4 border-t border-slate-200">
-                  <button
-                    onClick={() => uploadDisclosure(plan.id)}
-                    className="w-full px-4 py-2.5 text-sm font-medium text-white bg-risk-orange rounded-md hover:bg-orange-600 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
-                  >
-                    <Upload className="w-4 h-4" />
-                    上传安全交底记录
-                  </button>
-                </div>
-              )}
+            {canUploadDisclosure && (
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <button
+                  onClick={() => uploadDisclosure(plan.id, user.name)}
+                  className="w-full px-4 py-2.5 text-sm font-medium text-white bg-risk-orange rounded-md hover:bg-orange-600 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Upload className="w-4 h-4" />
+                  上传安全交底记录
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="bg-white rounded-lg border border-slate-200 shadow-card p-5">
             <h3 className="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-2">
               <FileCheck className="w-4 h-4 text-brand-600" />
               方案附件
+              {canUploadAttachments && <span className="ml-auto text-xs text-slate-400 font-normal">可编辑</span>}
             </h3>
-            <AttachmentList attachments={plan.attachments} />
+            <AttachmentList
+              attachments={plan.attachments}
+              canEdit={canUploadAttachments}
+              onUpload={canUploadAttachments ? handleUploadAttachment : undefined}
+              onRemove={canUploadAttachments ? handleRemoveAttachment : undefined}
+            />
           </div>
         </div>
       </div>
 
-      <RejectModal
-        open={showReject}
-        onClose={() => setShowReject(false)}
-        onConfirm={handleReject}
-      />
+      <RejectModal open={showReject} onClose={() => setShowReject(false)} onConfirm={handleReject} />
 
       {showApprove && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 animate-fade-in">
@@ -320,7 +405,7 @@ export default function PlanDetail() {
                 className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 resize-none"
               />
               <div className="mt-2 text-xs text-slate-400">
-                您的签名将随审批意见一并记录。
+                将以「<span className="text-brand-700 font-medium">{user.name}</span>」身份签名确认。
               </div>
             </div>
             <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-slate-200 bg-slate-50 rounded-b-xl">
@@ -339,6 +424,26 @@ export default function PlanDetail() {
             </div>
           </div>
         </div>
+      )}
+
+      {showEdit && (
+        <PlanForm
+          title="编辑方案"
+          submitLabel="保存修改"
+          initialData={{
+            projectName: plan.projectName,
+            engineeringType: plan.engineeringType,
+            location: plan.location,
+            scaleParams: plan.scaleParams,
+            planStartDate: plan.planStartDate,
+            authorName: plan.authorName,
+            needExpertReview: plan.needExpertReview,
+          }}
+          existingAttachments={plan.attachments}
+          readOnlyAuthor
+          onSubmit={(data) => handleEditSubmit(plan.attachments, data)}
+          onCancel={() => setShowEdit(false)}
+        />
       )}
     </div>
   );

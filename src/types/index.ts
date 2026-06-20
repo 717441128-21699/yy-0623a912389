@@ -77,3 +77,12 @@ export interface RiskItem {
   engineeringType: EngineeringType;
   severity: 'high' | 'medium' | 'low';
 }
+
+export interface PlanUpdateData {
+  projectName?: string;
+  engineeringType?: EngineeringType;
+  location?: string;
+  scaleParams?: string;
+  planStartDate?: string;
+  needExpertReview?: boolean;
+}

@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Eye, Edit2 } from 'lucide-react';
+import { Plus, Search, Eye, Edit2, Upload } from 'lucide-react';
 import { usePlanStore } from '../store/usePlanStore';
-import type { PlanStatus } from '../types';
+import type { PlanStatus, Attachment } from '../types';
 import { StatusBadge, EngineeringBadge } from '../components/StatusBadge';
-import NewPlanModal from '../components/NewPlanModal';
+import PlanForm, { type PlanFormData } from '../components/PlanForm';
 import { formatDate } from '../utils/dateUtils';
 
 type TabKey = 'all' | PlanStatus;
@@ -19,10 +19,18 @@ const tabs: { key: TabKey; label: string }[] = [
 
 export default function PlanList() {
   const navigate = useNavigate();
-  const { plans, getPlansByStatus, submitForReview, user } = usePlanStore();
+  const plans = usePlanStore((s) => s.plans);
+  const user = usePlanStore((s) => s.user);
+  const getPlansByStatus = usePlanStore((s) => s.getPlansByStatus);
+  const addPlan = usePlanStore((s) => s.addPlan);
+  const submitForReview = usePlanStore((s) => s.submitForReview);
+  const addAttachment = usePlanStore((s) => s.addAttachment);
+  const updatePlan = usePlanStore((s) => s.updatePlan);
+
   const [activeTab, setActiveTab] = useState<TabKey>('all');
   const [keyword, setKeyword] = useState('');
   const [showNewPlan, setShowNewPlan] = useState(false);
+  const [editingPlanId, setEditingPlanId] = useState<string | null>(null);
 
   const filteredPlans = activeTab === 'all' ? plans : getPlansByStatus(activeTab);
   const searchedPlans = filteredPlans.filter(
@@ -31,7 +39,6 @@ export default function PlanList() {
       p.location.includes(keyword) ||
       p.engineeringType.includes(keyword)
   );
-
   const sortedPlans = [...searchedPlans].sort(
     (a, b) => new Date(a.planStartDate).getTime() - new Date(b.planStartDate).getTime()
   );
@@ -39,11 +46,52 @@ export default function PlanList() {
   const getTabCount = (key: TabKey) =>
     key === 'all' ? plans.length : getPlansByStatus(key).length;
 
-  const handleSubmit = (planId: string) => {
+  const handleNewSubmit = (data: PlanFormData) => {
+    const newId = addPlan({
+      projectName: data.projectName,
+      engineeringType: data.engineeringType,
+      location: data.location,
+      scaleParams: data.scaleParams,
+      planStartDate: data.planStartDate,
+      authorName: data.authorName || user.name,
+      needExpertReview: data.needExpertReview,
+      attachments: [],
+    });
+    data.attachments.forEach((att) => {
+      addAttachment(newId, { fileName: att.fileName, fileType: att.fileType, fileSize: att.fileSize });
+    });
+    setShowNewPlan(false);
+  };
+
+  const handleEditSubmit = (planId: string, original: Attachment[], data: PlanFormData) => {
+    updatePlan(
+      planId,
+      {
+        projectName: data.projectName,
+        engineeringType: data.engineeringType,
+        location: data.location,
+        scaleParams: data.scaleParams,
+        planStartDate: data.planStartDate,
+        needExpertReview: data.needExpertReview,
+      },
+      user.name
+    );
+    const existingNames = new Set(original.map((a) => a.fileName));
+    data.attachments.forEach((att) => {
+      if (!existingNames.has(att.fileName)) {
+        addAttachment(planId, { fileName: att.fileName, fileType: att.fileType, fileSize: att.fileSize });
+      }
+    });
+    setEditingPlanId(null);
+  };
+
+  const handleSubmit = (planId: string, authorName: string) => {
     if (confirm('确认提交审核？提交后将进入审批流程。')) {
-      submitForReview(planId);
+      submitForReview(planId, authorName);
     }
   };
+
+  const editingPlan = editingPlanId ? plans.find((p) => p.id === editingPlanId) : null;
 
   return (
     <div className="space-y-5">
@@ -72,17 +120,13 @@ export default function PlanList() {
                   key={tab.key}
                   onClick={() => setActiveTab(tab.key)}
                   className={`relative px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
-                    isActive
-                      ? 'bg-brand-600 text-white shadow-sm'
-                      : 'text-slate-600 hover:text-slate-800'
+                    isActive ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'
                   }`}
                 >
                   {tab.label}
                   <span
                     className={`ml-1.5 text-xs px-1.5 py-0.5 rounded-full ${
-                      isActive
-                        ? 'bg-white/20 text-white'
-                        : 'bg-slate-200 text-slate-600'
+                      isActive ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'
                     }`}
                   >
                     {count}
@@ -108,61 +152,35 @@ export default function PlanList() {
           <table className="w-full">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-5 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  工程信息
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  类型
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  规模参数
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  计划开工
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  编制人
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  状态
-                </th>
-                <th className="px-5 py-3 text-right text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  操作
-                </th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">工程信息</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">类型</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">规模参数</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">计划开工</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">编制人</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">状态</th>
+                <th className="px-5 py-3 text-right text-xs font-semibold text-slate-600 uppercase tracking-wider">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {sortedPlans.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-16 text-center text-sm text-slate-400">
-                    暂无方案数据
-                  </td>
+                  <td colSpan={7} className="px-5 py-16 text-center text-sm text-slate-400">暂无方案数据</td>
                 </tr>
               ) : (
                 sortedPlans.map((plan, idx) => (
                   <tr
                     key={plan.id}
-                    className={`hover:bg-brand-50/30 transition-colors ${
-                      idx % 2 === 1 ? 'bg-slate-50/30' : ''
-                    }`}
+                    className={`hover:bg-brand-50/30 transition-colors ${idx % 2 === 1 ? 'bg-slate-50/30' : ''}`}
                   >
                     <td className="px-5 py-3.5">
                       <div className="text-sm font-medium text-slate-800">{plan.projectName}</div>
                       <div className="text-xs text-slate-500 mt-0.5">{plan.location}</div>
                     </td>
-                    <td className="px-4 py-3.5">
-                      <EngineeringBadge type={plan.engineeringType} />
-                    </td>
-                    <td className="px-4 py-3.5 text-sm text-slate-600 max-w-[220px] truncate">
-                      {plan.scaleParams}
-                    </td>
-                    <td className="px-4 py-3.5 text-sm text-slate-600">
-                      {formatDate(plan.planStartDate)}
-                    </td>
+                    <td className="px-4 py-3.5"><EngineeringBadge type={plan.engineeringType} /></td>
+                    <td className="px-4 py-3.5 text-sm text-slate-600 max-w-[220px] truncate">{plan.scaleParams}</td>
+                    <td className="px-4 py-3.5 text-sm text-slate-600">{formatDate(plan.planStartDate)}</td>
                     <td className="px-4 py-3.5 text-sm text-slate-600">{plan.authorName}</td>
-                    <td className="px-4 py-3.5">
-                      <StatusBadge status={plan.status} />
-                    </td>
+                    <td className="px-4 py-3.5"><StatusBadge status={plan.status} /></td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center justify-end gap-1">
                         <button
@@ -172,16 +190,26 @@ export default function PlanList() {
                         >
                           <Eye className="w-4 h-4" />
                         </button>
-                        {plan.status === 'draft' && plan.authorName === user.name && (
+                        {plan.status === 'draft' && (
                           <>
                             <button
+                              onClick={() => setEditingPlanId(plan.id)}
                               className="p-1.5 rounded text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
                               title="编辑"
                             >
                               <Edit2 className="w-4 h-4" />
                             </button>
+                            {plan.attachments.length === 0 && (
+                              <button
+                                className="p-1.5 rounded text-slate-500 hover:text-brand-600 hover:bg-brand-50 transition-colors"
+                                title="请在详情中上传附件"
+                                onClick={() => navigate(`/plans/${plan.id}`)}
+                              >
+                                <Upload className="w-4 h-4" />
+                              </button>
+                            )}
                             <button
-                              onClick={() => handleSubmit(plan.id)}
+                              onClick={() => handleSubmit(plan.id, plan.authorName)}
                               className="ml-1 px-2.5 py-1 text-xs font-medium text-white bg-brand-600 rounded hover:bg-brand-700 transition-colors"
                             >
                               提交审核
@@ -198,7 +226,35 @@ export default function PlanList() {
         </div>
       </div>
 
-      <NewPlanModal open={showNewPlan} onClose={() => setShowNewPlan(false)} />
+      {showNewPlan && (
+        <PlanForm
+          title="新建危大工程方案"
+          submitLabel="保存"
+          initialData={{ authorName: user.name }}
+          onSubmit={handleNewSubmit}
+          onCancel={() => setShowNewPlan(false)}
+        />
+      )}
+
+      {editingPlan && (
+        <PlanForm
+          title="编辑方案"
+          submitLabel="保存修改"
+          initialData={{
+            projectName: editingPlan.projectName,
+            engineeringType: editingPlan.engineeringType,
+            location: editingPlan.location,
+            scaleParams: editingPlan.scaleParams,
+            planStartDate: editingPlan.planStartDate,
+            authorName: editingPlan.authorName,
+            needExpertReview: editingPlan.needExpertReview,
+          }}
+          existingAttachments={editingPlan.attachments}
+          readOnlyAuthor
+          onSubmit={(data) => handleEditSubmit(editingPlan.id, editingPlan.attachments, data)}
+          onCancel={() => setEditingPlanId(null)}
+        />
+      )}
     </div>
   );
 }
