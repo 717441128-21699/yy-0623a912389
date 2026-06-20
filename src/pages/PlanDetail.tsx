@@ -13,6 +13,8 @@ import {
   AlertCircle,
   Edit2,
   Send,
+  MessageSquare,
+  RotateCcw,
 } from 'lucide-react';
 import { usePlanStore } from '../store/usePlanStore';
 import { StatusBadge, EngineeringBadge } from '../components/StatusBadge';
@@ -20,7 +22,7 @@ import ApprovalTimeline from '../components/ApprovalTimeline';
 import AttachmentList from '../components/AttachmentList';
 import RejectModal from '../components/RejectModal';
 import PlanForm, { type PlanFormData } from '../components/PlanForm';
-import type { Attachment } from '../types';
+import type { Attachment, AttachmentCategory } from '../types';
 import { formatDate, formatDateTime, daysUntil } from '../utils/dateUtils';
 
 export default function PlanDetail() {
@@ -42,6 +44,7 @@ export default function PlanDetail() {
   const [showReject, setShowReject] = useState(false);
   const [showApprove, setShowApprove] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [showResubmit, setShowResubmit] = useState(false);
   const [approveOpinion, setApproveOpinion] = useState('');
   const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
 
@@ -64,6 +67,11 @@ export default function PlanDetail() {
   const isDisclosed = plan.status === 'disclosed';
   const canEditDraft = isDraft;
   const canUploadAttachments = isDraft;
+  const isResubmit = !!plan.lastRejection;
+
+  const lastRejection = plan.lastRejection;
+  const lastResubmitLog = [...plan.modificationLogs].reverse().find((l) => l.isResubmit);
+  const recentChanges = [...plan.modificationLogs].reverse().find((l) => !l.description.includes('退回修改'));
 
   const canAct = () => {
     if (!currentNode || isDisclosed || isDraft) return false;
@@ -111,7 +119,7 @@ export default function PlanDetail() {
     setShowReject(true);
   };
 
-  const handleUploadAttachment = (fileMeta: { fileName: string; fileType: string; fileSize: number }) => {
+  const handleUploadAttachment = (fileMeta: { fileName: string; fileType: string; fileSize: number; category: AttachmentCategory }) => {
     addAttachment(plan.id, fileMeta);
   };
 
@@ -120,6 +128,16 @@ export default function PlanDetail() {
   };
 
   const handleEditSubmit = (originalAtts: Attachment[], data: PlanFormData) => {
+    const removedIds = data.removedAttachmentIds || [];
+    const addedNames = data.addedAttachmentNames || [];
+
+    const attachmentChanges: string[] = [];
+    const removedNames = originalAtts.filter((a) => removedIds.includes(a.id)).map((a) => `删除附件"${a.fileName}"`);
+    attachmentChanges.push(...removedNames);
+    addedNames.forEach((n) => attachmentChanges.push(`新增附件"${n}"`));
+
+    removedIds.forEach((attId) => removeAttachment(plan.id, attId));
+
     updatePlan(
       plan.id,
       {
@@ -129,21 +147,32 @@ export default function PlanDetail() {
         scaleParams: data.scaleParams,
         planStartDate: data.planStartDate,
         needExpertReview: data.needExpertReview,
+        attachmentChanges,
+        resubmitNote: data.resubmitNote,
       },
       user.name
     );
     const existingNames = new Set(originalAtts.map((a) => a.fileName));
     data.attachments.forEach((att) => {
       if (!existingNames.has(att.fileName)) {
-        addAttachment(plan.id, { fileName: att.fileName, fileType: att.fileType, fileSize: att.fileSize });
+        addAttachment(plan.id, { fileName: att.fileName, fileType: att.fileType, fileSize: att.fileSize, category: 'plan' });
       }
     });
     setShowEdit(false);
   };
 
+  const handleResubmit = (resubmitNote: string) => {
+    submitForReview(plan.id, plan.authorName, resubmitNote);
+    setShowResubmit(false);
+  };
+
   const handleSubmit = () => {
-    if (confirm('确认提交审核？提交后将进入审批流程。')) {
-      submitForReview(plan.id, plan.authorName);
+    if (isResubmit) {
+      setShowResubmit(true);
+    } else {
+      if (confirm('确认提交审核？提交后将进入审批流程。')) {
+        submitForReview(plan.id, plan.authorName);
+      }
     }
   };
 
@@ -190,11 +219,54 @@ export default function PlanDetail() {
               className="px-3 py-1.5 text-sm font-medium text-white bg-brand-600 rounded-md hover:bg-brand-700 active:scale-[0.98] transition-all flex items-center gap-1.5"
             >
               <Send className="w-4 h-4" />
-              提交审核
+              {isResubmit ? '重新提交' : '提交审核'}
             </button>
           </div>
         )}
       </div>
+
+      {lastRejection && (
+        <div className="bg-white rounded-lg border border-red-200 shadow-card p-5">
+          <h3 className="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-2">
+            <MessageSquare className="w-4 h-4 text-risk-red" />
+            审批意见对比
+          </h3>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="rounded-md border border-red-200 bg-red-50 p-3">
+              <div className="text-xs font-semibold text-risk-red mb-2 flex items-center gap-1">
+                <RotateCcw className="w-3 h-3" />
+                退回意见
+              </div>
+              <div className="text-xs text-slate-500 mb-1">
+                {lastRejection.rejecterName}（{lastRejection.role}）· {formatDateTime(lastRejection.timestamp)}
+              </div>
+              <div className="text-sm text-slate-800 mt-1">{lastRejection.opinion}</div>
+            </div>
+            <div className="rounded-md border border-brand-200 bg-brand-50 p-3">
+              <div className="text-xs font-semibold text-brand-700 mb-2 flex items-center gap-1">
+                <PenLine className="w-3 h-3" />
+                修改说明
+              </div>
+              {lastResubmitLog ? (
+                <div className="text-sm text-slate-800">{lastResubmitLog.description}</div>
+              ) : (
+                <div className="text-sm text-slate-400 italic">尚未重新提交</div>
+              )}
+            </div>
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+              <div className="text-xs font-semibold text-slate-600 mb-2 flex items-center gap-1">
+                <History className="w-3 h-3" />
+                字段变化
+              </div>
+              {recentChanges ? (
+                <div className="text-sm text-slate-700">{recentChanges.description}</div>
+              ) : (
+                <div className="text-sm text-slate-400 italic">暂无变更</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-5">
         <div className="col-span-2 space-y-5">
@@ -279,6 +351,9 @@ export default function PlanDetail() {
                       <span className="font-medium text-slate-700">{log.modifierName}</span>
                       <span>·</span>
                       <span>{formatDateTime(log.timestamp)}</span>
+                      {log.isResubmit && (
+                        <span className="px-1.5 py-0.5 rounded bg-brand-50 text-brand-700 text-xs font-medium">重新提交</span>
+                      )}
                     </div>
                     <div className="mt-1 text-sm text-slate-700">{log.description}</div>
                   </div>
@@ -298,15 +373,31 @@ export default function PlanDetail() {
             {isDraft ? (
               <div className="space-y-3">
                 <div className="text-sm text-slate-600 bg-slate-50 rounded-md p-3 border border-slate-200">
-                  当前状态：<span className="font-medium text-slate-800">待编制</span>
-                  <div className="mt-1 text-xs text-slate-500">可编辑方案内容并提交审核</div>
+                  当前状态：<span className="font-medium text-slate-800">{isResubmit ? '退回修改中' : '待编制'}</span>
+                  {isResubmit && lastRejection && (
+                    <div className="mt-1 text-xs text-risk-red">
+                      {lastRejection.role}退回：{lastRejection.opinion}
+                    </div>
+                  )}
+                  {!isResubmit && (
+                    <div className="mt-1 text-xs text-slate-500">可编辑方案内容并提交审核</div>
+                  )}
                 </div>
+                {isResubmit && (
+                  <button
+                    onClick={() => setShowEdit(true)}
+                    className="w-full px-4 py-2.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                    编辑修改
+                  </button>
+                )}
                 <button
                   onClick={handleSubmit}
                   className="w-full px-4 py-2.5 text-sm font-medium text-white bg-brand-600 rounded-md hover:bg-brand-700 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
                 >
                   <Send className="w-4 h-4" />
-                  提交审核
+                  {isResubmit ? '重新提交审核' : '提交审核'}
                 </button>
               </div>
             ) : isDisclosed ? (
@@ -318,7 +409,16 @@ export default function PlanDetail() {
                 <div className="text-sm text-slate-600 bg-slate-50 rounded-md p-3 border border-slate-200">
                   当前节点：<span className="font-medium text-slate-800">{currentNode.role}</span>
                   <div className="mt-1 text-xs text-slate-500">处理人：{currentNode.userName}</div>
+                  {currentNode.round && currentNode.round > 1 && (
+                    <div className="mt-1 text-xs text-brand-600">第 {currentNode.round} 轮审批</div>
+                  )}
                 </div>
+
+                {lastRejection && (
+                  <div className="text-xs bg-red-50 border border-red-100 rounded-md p-2.5 text-risk-red">
+                    上次退回：{lastRejection.opinion}
+                  </div>
+                )}
 
                 {currentNode.role === '专家论证' ? (
                   <button
@@ -351,6 +451,9 @@ export default function PlanDetail() {
                 <div className="text-slate-600 bg-slate-50 rounded-md p-3 border border-slate-200">
                   当前等待：<span className="font-medium text-slate-800">{currentNode.role}</span>
                   <div className="mt-1 text-xs text-slate-500">处理人：{currentNode.userName}</div>
+                  {currentNode.round && currentNode.round > 1 && (
+                    <div className="mt-1 text-xs text-brand-600">第 {currentNode.round} 轮审批</div>
+                  )}
                 </div>
                 <div className="text-xs text-slate-400 text-center">
                   当前身份「{user.roleName}」暂无此节点审批权限，可在左下角切换身份。
@@ -375,7 +478,7 @@ export default function PlanDetail() {
             <h3 className="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-2">
               <FileCheck className="w-4 h-4 text-brand-600" />
               方案附件
-              {canUploadAttachments && <span className="ml-auto text-xs text-slate-400 font-normal">可编辑</span>}
+              <span className="ml-auto text-xs text-slate-400 font-normal">{plan.attachments.length} 个</span>
             </h3>
             <AttachmentList
               attachments={plan.attachments}
@@ -426,9 +529,17 @@ export default function PlanDetail() {
         </div>
       )}
 
+      {showResubmit && (
+        <ResubmitModal
+          rejection={lastRejection}
+          onConfirm={handleResubmit}
+          onCancel={() => setShowResubmit(false)}
+        />
+      )}
+
       {showEdit && (
         <PlanForm
-          title="编辑方案"
+          title={isResubmit ? '编辑修改方案' : '编辑方案'}
           submitLabel="保存修改"
           initialData={{
             projectName: plan.projectName,
@@ -438,13 +549,69 @@ export default function PlanDetail() {
             planStartDate: plan.planStartDate,
             authorName: plan.authorName,
             needExpertReview: plan.needExpertReview,
+            resubmitNote: '',
           }}
-          existingAttachments={plan.attachments}
+          existingAttachments={plan.attachments.filter((a) => a.category === 'plan')}
           readOnlyAuthor
+          showResubmitNote={isResubmit}
           onSubmit={(data) => handleEditSubmit(plan.attachments, data)}
           onCancel={() => setShowEdit(false)}
         />
       )}
+    </div>
+  );
+}
+
+function ResubmitModal({
+  rejection,
+  onConfirm,
+  onCancel,
+}: {
+  rejection: { role: string; opinion: string; rejecterName: string } | undefined;
+  onConfirm: (note: string) => void;
+  onCancel: () => void;
+}) {
+  const [note, setNote] = useState('');
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 animate-fade-in">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md animate-fade-in-up">
+        <div className="px-5 py-4 border-b border-slate-200">
+          <h2 className="text-base font-semibold text-slate-800">重新提交审核</h2>
+        </div>
+        <div className="p-5">
+          {rejection && (
+            <div className="mb-3 p-3 rounded-md bg-red-50 border border-red-100 text-sm text-risk-red">
+              <div className="font-medium mb-1">上次退回意见（{rejection.role}）</div>
+              <div>{rejection.opinion}</div>
+            </div>
+          )}
+          <label className="block text-sm font-medium text-slate-700 mb-1.5">
+            修改说明 <span className="text-risk-orange">*</span>
+          </label>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={3}
+            placeholder="请简要说明针对退回意见做了哪些修改..."
+            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 resize-none"
+          />
+        </div>
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-slate-200 bg-slate-50 rounded-b-xl">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-colors"
+          >
+            取消
+          </button>
+          <button
+            onClick={() => onConfirm(note.trim() || '已按退回意见修改完成。')}
+            disabled={!note.trim()}
+            className="px-4 py-2 text-sm font-medium text-white bg-brand-600 rounded-md hover:bg-brand-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            确认重新提交
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

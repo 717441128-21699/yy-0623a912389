@@ -8,6 +8,8 @@ export type ApprovalAction = 'pending' | 'approved' | 'rejected';
 
 export type UserRole = 'tech_lead' | 'project_manager' | 'supervisor' | 'owner_rep';
 
+export type AttachmentCategory = 'plan' | 'expert_review' | 'disclosure';
+
 export interface Plan {
   id: string;
   projectName: string;
@@ -26,6 +28,16 @@ export interface Plan {
   attachments: Attachment[];
   approvalNodes: ApprovalNode[];
   modificationLogs: ModificationLog[];
+  lastRejection?: RejectionContext;
+  resubmitNote?: string;
+}
+
+export interface RejectionContext {
+  nodeId: string;
+  role: ApprovalRole;
+  opinion: string;
+  rejecterName: string;
+  timestamp: string;
 }
 
 export interface ApprovalNode {
@@ -38,6 +50,7 @@ export interface ApprovalNode {
   signature?: string;
   timestamp?: string;
   orderIndex: number;
+  round?: number;
 }
 
 export interface ModificationLog {
@@ -46,6 +59,7 @@ export interface ModificationLog {
   modifierName: string;
   description: string;
   timestamp: string;
+  isResubmit?: boolean;
 }
 
 export interface Attachment {
@@ -54,6 +68,7 @@ export interface Attachment {
   fileType: string;
   fileSize: number;
   uploadedAt: string;
+  category: AttachmentCategory;
 }
 
 export interface User {
@@ -85,4 +100,6 @@ export interface PlanUpdateData {
   scaleParams?: string;
   planStartDate?: string;
   needExpertReview?: boolean;
+  attachmentChanges?: string[];
+  resubmitNote?: string;
 }

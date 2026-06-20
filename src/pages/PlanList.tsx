@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Eye, Edit2, Upload } from 'lucide-react';
 import { usePlanStore } from '../store/usePlanStore';
@@ -25,6 +25,7 @@ export default function PlanList() {
   const addPlan = usePlanStore((s) => s.addPlan);
   const submitForReview = usePlanStore((s) => s.submitForReview);
   const addAttachment = usePlanStore((s) => s.addAttachment);
+  const removeAttachment = usePlanStore((s) => s.removeAttachment);
   const updatePlan = usePlanStore((s) => s.updatePlan);
 
   const [activeTab, setActiveTab] = useState<TabKey>('all');
@@ -58,12 +59,21 @@ export default function PlanList() {
       attachments: [],
     });
     data.attachments.forEach((att) => {
-      addAttachment(newId, { fileName: att.fileName, fileType: att.fileType, fileSize: att.fileSize });
+      addAttachment(newId, { fileName: att.fileName, fileType: att.fileType, fileSize: att.fileSize, category: 'plan' });
     });
     setShowNewPlan(false);
   };
 
   const handleEditSubmit = (planId: string, original: Attachment[], data: PlanFormData) => {
+    const removedIds = data.removedAttachmentIds || [];
+    const addedNames = data.addedAttachmentNames || [];
+    const attachmentChanges: string[] = [];
+    const removedNames = original.filter((a) => removedIds.includes(a.id)).map((a) => `删除附件"${a.fileName}"`);
+    attachmentChanges.push(...removedNames);
+    addedNames.forEach((n) => attachmentChanges.push(`新增附件"${n}"`));
+
+    removedIds.forEach((attId) => removeAttachment(planId, attId));
+
     updatePlan(
       planId,
       {
@@ -73,19 +83,25 @@ export default function PlanList() {
         scaleParams: data.scaleParams,
         planStartDate: data.planStartDate,
         needExpertReview: data.needExpertReview,
+        attachmentChanges,
       },
       user.name
     );
     const existingNames = new Set(original.map((a) => a.fileName));
     data.attachments.forEach((att) => {
       if (!existingNames.has(att.fileName)) {
-        addAttachment(planId, { fileName: att.fileName, fileType: att.fileType, fileSize: att.fileSize });
+        addAttachment(planId, { fileName: att.fileName, fileType: att.fileType, fileSize: att.fileSize, category: 'plan' });
       }
     });
     setEditingPlanId(null);
   };
 
   const handleSubmit = (planId: string, authorName: string) => {
+    const plan = plans.find((p) => p.id === planId);
+    if (plan?.lastRejection) {
+      navigate(`/plans/${planId}`);
+      return;
+    }
     if (confirm('确认提交审核？提交后将进入审批流程。')) {
       submitForReview(planId, authorName);
     }
@@ -180,7 +196,12 @@ export default function PlanList() {
                     <td className="px-4 py-3.5 text-sm text-slate-600 max-w-[220px] truncate">{plan.scaleParams}</td>
                     <td className="px-4 py-3.5 text-sm text-slate-600">{formatDate(plan.planStartDate)}</td>
                     <td className="px-4 py-3.5 text-sm text-slate-600">{plan.authorName}</td>
-                    <td className="px-4 py-3.5"><StatusBadge status={plan.status} /></td>
+                    <td className="px-4 py-3.5">
+                      <StatusBadge status={plan.status} />
+                      {plan.lastRejection && plan.status === 'draft' && (
+                        <div className="text-xs text-risk-red mt-1">退回修改中</div>
+                      )}
+                    </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center justify-end gap-1">
                         <button
@@ -199,7 +220,7 @@ export default function PlanList() {
                             >
                               <Edit2 className="w-4 h-4" />
                             </button>
-                            {plan.attachments.length === 0 && (
+                            {plan.attachments.filter((a) => a.category === 'plan').length === 0 && (
                               <button
                                 className="p-1.5 rounded text-slate-500 hover:text-brand-600 hover:bg-brand-50 transition-colors"
                                 title="请在详情中上传附件"
@@ -212,7 +233,7 @@ export default function PlanList() {
                               onClick={() => handleSubmit(plan.id, plan.authorName)}
                               className="ml-1 px-2.5 py-1 text-xs font-medium text-white bg-brand-600 rounded hover:bg-brand-700 transition-colors"
                             >
-                              提交审核
+                              {plan.lastRejection ? '重新提交' : '提交审核'}
                             </button>
                           </>
                         )}
@@ -248,9 +269,11 @@ export default function PlanList() {
             planStartDate: editingPlan.planStartDate,
             authorName: editingPlan.authorName,
             needExpertReview: editingPlan.needExpertReview,
+            resubmitNote: '',
           }}
-          existingAttachments={editingPlan.attachments}
+          existingAttachments={editingPlan.attachments.filter((a) => a.category === 'plan')}
           readOnlyAuthor
+          showResubmitNote={!!editingPlan.lastRejection}
           onSubmit={(data) => handleEditSubmit(editingPlan.id, editingPlan.attachments, data)}
           onCancel={() => setEditingPlanId(null)}
         />

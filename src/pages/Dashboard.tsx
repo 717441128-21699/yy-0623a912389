@@ -40,7 +40,7 @@ export default function Dashboard() {
       needExpertReview: data.needExpertReview,
     });
     data.attachments.forEach((att) => {
-      addAttachment(newPlanId, { fileName: att.fileName, fileType: att.fileType, fileSize: att.fileSize });
+      addAttachment(newPlanId, { fileName: att.fileName, fileType: att.fileType, fileSize: att.fileSize, category: 'plan' as const });
     });
     setShowNewPlan(false);
   };

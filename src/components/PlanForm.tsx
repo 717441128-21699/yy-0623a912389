@@ -12,6 +12,9 @@ export interface PlanFormData {
   authorName: string;
   needExpertReview: boolean;
   attachments: { fileName: string; fileType: string; fileSize: number }[];
+  resubmitNote?: string;
+  removedAttachmentIds?: string[];
+  addedAttachmentNames?: string[];
 }
 
 export interface PlanFormErrors {
@@ -37,6 +40,7 @@ interface PlanFormProps {
   submitLabel?: string;
   title?: string;
   readOnlyAuthor?: boolean;
+  showResubmitNote?: boolean;
 }
 
 export default function PlanForm({
@@ -47,6 +51,7 @@ export default function PlanForm({
   submitLabel = '保存',
   title = '新建危大工程方案',
   readOnlyAuthor = false,
+  showResubmitNote = false,
 }: PlanFormProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<PlanFormData>({
@@ -58,6 +63,9 @@ export default function PlanForm({
     authorName: initialData?.authorName ?? '',
     needExpertReview: initialData?.needExpertReview ?? true,
     attachments: initialData?.attachments ?? [],
+    resubmitNote: initialData?.resubmitNote ?? '',
+    removedAttachmentIds: [],
+    addedAttachmentNames: [],
   });
   const [existing, setExisting] = useState<Attachment[]>(existingAttachments);
   const [errors, setErrors] = useState<PlanFormErrors>({});
@@ -81,22 +89,38 @@ export default function PlanForm({
       const ext = parts.length > 1 ? parts.pop()!.toLowerCase() : 'file';
       return { fileName: f.name, fileType: ext, fileSize: f.size };
     });
-    setForm({ ...form, attachments: [...form.attachments, ...newOnes] });
+    setForm({
+      ...form,
+      attachments: [...form.attachments, ...newOnes],
+      addedAttachmentNames: [...(form.addedAttachmentNames || []), ...newOnes.map((n) => n.fileName)],
+    });
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const removePending = (idx: number) => {
-    setForm({ ...form, attachments: form.attachments.filter((_, i) => i !== idx) });
+    const removed = form.attachments[idx];
+    setForm({
+      ...form,
+      attachments: form.attachments.filter((_, i) => i !== idx),
+      addedAttachmentNames: (form.addedAttachmentNames || []).filter((n) => n !== removed.fileName),
+    });
   };
 
-  const removeExisting = (attId: string) => {
+  const removeExisting = (attId: string, attName: string) => {
     setExisting(existing.filter((a) => a.id !== attId));
+    setForm({
+      ...form,
+      removedAttachmentIds: [...(form.removedAttachmentIds || []), attId],
+    });
   };
 
   const handleSubmit = () => {
     if (!validate()) return;
     const finalAttachments = [...existing.map((a) => ({ fileName: a.fileName, fileType: a.fileType, fileSize: a.fileSize })), ...form.attachments];
-    onSubmit({ ...form, attachments: finalAttachments });
+    onSubmit({
+      ...form,
+      attachments: finalAttachments,
+    });
   };
 
   return (
@@ -213,6 +237,21 @@ export default function PlanForm({
               </label>
             </div>
 
+            {showResubmitNote && (
+              <div className="col-span-2">
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  修改说明 <span className="text-risk-orange">*</span>
+                </label>
+                <textarea
+                  value={form.resubmitNote || ''}
+                  onChange={(e) => setForm({ ...form, resubmitNote: e.target.value })}
+                  rows={2}
+                  placeholder="请简要说明针对退回意见做了哪些修改..."
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 resize-none"
+                />
+              </div>
+            )}
+
             <div className="col-span-2">
               <label className="block text-sm font-medium text-slate-700 mb-1.5">方案附件</label>
               <div
@@ -241,7 +280,7 @@ export default function PlanForm({
                         <div className="text-xs text-slate-500">{formatFileSize(att.fileSize)}</div>
                       </div>
                       <button
-                        onClick={(e) => { e.stopPropagation(); removeExisting(att.id); }}
+                        onClick={(e) => { e.stopPropagation(); removeExisting(att.id, att.fileName); }}
                         className="p-1 text-slate-400 hover:text-risk-red hover:bg-red-50 rounded transition-colors"
                         title="移除"
                       >

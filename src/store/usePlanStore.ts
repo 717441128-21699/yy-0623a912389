@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Plan, PlanStatus, User, RiskItem, RiskType, ApprovalNode, Attachment, PlanUpdateData, EngineeringType } from '../types';
+import type { Plan, PlanStatus, User, RiskItem, ApprovalNode, Attachment, PlanUpdateData, AttachmentCategory } from '../types';
 import { mockPlans, currentUser, availableUsers } from '../data/mockPlans';
 import { daysUntil, generateId, now } from '../utils/dateUtils';
 
@@ -19,15 +19,15 @@ interface PlanState {
     expertIncomplete: number;
     disclosureMissing: number;
   };
-  addPlan: (plan: Omit<Plan, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'approvalNodes' | 'modificationLogs' | 'expertReviewDone' | 'disclosureUploaded' | 'attachments'> & { attachments?: Attachment[] }) => string;
+  addPlan: (plan: Omit<Plan, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'approvalNodes' | 'modificationLogs' | 'expertReviewDone' | 'disclosureUploaded' | 'attachments' | 'lastRejection' | 'resubmitNote'> & { attachments?: Attachment[] }) => string;
   updatePlan: (planId: string, data: PlanUpdateData, modifierName: string) => void;
   addAttachment: (planId: string, fileMeta: Omit<Attachment, 'id' | 'uploadedAt'>) => void;
   removeAttachment: (planId: string, attachmentId: string) => void;
-  submitForReview: (planId: string, submitterName: string) => void;
+  submitForReview: (planId: string, submitterName: string, resubmitNote?: string) => void;
   approveNode: (planId: string, nodeId: string, opinion: string, approverName: string) => void;
   rejectNode: (planId: string, nodeId: string, opinion: string, rejecterName: string) => void;
-  uploadExpertReview: (planId: string, uploaderName: string) => void;
-  uploadDisclosure: (planId: string, uploaderName: string) => void;
+  uploadExpertReview: (planId: string, uploaderName: string, fileMeta?: { fileName: string; fileType: string; fileSize: number }) => void;
+  uploadDisclosure: (planId: string, uploaderName: string, fileMeta?: { fileName: string; fileType: string; fileSize: number }) => void;
   getCurrentNode: (plan: Plan) => ApprovalNode | undefined;
 }
 
@@ -135,23 +135,24 @@ export const usePlanStore = create<PlanState>((set, get) => ({
 
   addPlan: (planData) => {
     const newId = generateId();
+    const currentRound = 1;
     const buildApprovalNodes = (needExpert: boolean) => {
       const base: ApprovalNode[] = [
-        { id: generateId(), planId: newId, role: '项目技术负责人', userName: planData.authorName, action: 'pending', orderIndex: 0 },
-        { id: generateId(), planId: newId, role: '项目经理', userName: '张建国', action: 'pending', orderIndex: 1 },
-        { id: generateId(), planId: newId, role: '总监理工程师', userName: '王监理', action: 'pending', orderIndex: 2 },
+        { id: generateId(), planId: newId, role: '项目技术负责人', userName: planData.authorName, action: 'pending', orderIndex: 0, round: currentRound },
+        { id: generateId(), planId: newId, role: '项目经理', userName: '张建国', action: 'pending', orderIndex: 1, round: currentRound },
+        { id: generateId(), planId: newId, role: '总监理工程师', userName: '王监理', action: 'pending', orderIndex: 2, round: currentRound },
       ];
       if (needExpert) {
-        base.push({ id: generateId(), planId: newId, role: '专家论证', userName: '专家组', action: 'pending', orderIndex: 3 });
-        base.push({ id: generateId(), planId: newId, role: '建设单位代表', userName: '陈总', action: 'pending', orderIndex: 4 });
+        base.push({ id: generateId(), planId: newId, role: '专家论证', userName: '专家组', action: 'pending', orderIndex: 3, round: currentRound });
+        base.push({ id: generateId(), planId: newId, role: '建设单位代表', userName: '陈总', action: 'pending', orderIndex: 4, round: currentRound });
       } else {
-        base.push({ id: generateId(), planId: newId, role: '建设单位代表', userName: '陈总', action: 'pending', orderIndex: 3 });
+        base.push({ id: generateId(), planId: newId, role: '建设单位代表', userName: '陈总', action: 'pending', orderIndex: 3, round: currentRound });
       }
       return base;
     };
 
     const newPlan: Plan = {
-      attachments: [],
+      attachments: (planData.attachments || []).map((a) => ({ ...a, category: a.category || 'plan' as AttachmentCategory })),
       ...planData,
       id: newId,
       status: 'draft',
@@ -177,6 +178,9 @@ export const usePlanStore = create<PlanState>((set, get) => ({
         if (data.projectName && data.projectName !== p.projectName) changes.push(`工程名称改为"${data.projectName}"`);
         if (data.engineeringType && data.engineeringType !== p.engineeringType) changes.push(`工程类型从"${p.engineeringType}"改为"${data.engineeringType}"`);
         if (typeof data.needExpertReview === 'boolean' && data.needExpertReview !== p.needExpertReview) changes.push(data.needExpertReview ? '新增需专家论证要求' : '取消专家论证要求');
+        if (data.attachmentChanges && data.attachmentChanges.length > 0) {
+          changes.push(...data.attachmentChanges);
+        }
 
         const newLog = changes.length > 0
           ? {
@@ -185,6 +189,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
               modifierName,
               description: changes.join('；'),
               timestamp: now(),
+              isResubmit: !!data.resubmitNote,
             }
           : null;
 
@@ -213,14 +218,21 @@ export const usePlanStore = create<PlanState>((set, get) => ({
           }
         }
 
-        return {
+        const result: Plan = {
           ...p,
-          ...data,
+          projectName: data.projectName ?? p.projectName,
+          engineeringType: data.engineeringType ?? p.engineeringType,
+          location: data.location ?? p.location,
+          scaleParams: data.scaleParams ?? p.scaleParams,
+          planStartDate: data.planStartDate ?? p.planStartDate,
+          needExpertReview: data.needExpertReview ?? p.needExpertReview,
           approvalNodes,
           expertReviewDone: typeof data.needExpertReview === 'boolean' && !data.needExpertReview ? false : p.expertReviewDone,
           modificationLogs: newLog ? [...p.modificationLogs, newLog] : p.modificationLogs,
+          resubmitNote: data.resubmitNote || p.resubmitNote,
           updatedAt: now(),
         };
+        return result;
       }),
     }));
   },
@@ -233,6 +245,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
           ...fileMeta,
           id: generateId(),
           uploadedAt: now(),
+          category: fileMeta.category || 'plan',
         };
         return {
           ...p,
@@ -256,25 +269,71 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     }));
   },
 
-  submitForReview: (planId, submitterName) => {
+  submitForReview: (planId, submitterName, resubmitNote?) => {
     set((state) => ({
       plans: state.plans.map((p) => {
         if (p.id !== planId) return p;
-        const nodes = p.approvalNodes.map((n, i) =>
-          i === 0
-            ? {
-                ...n,
-                action: 'approved' as const,
-                timestamp: now(),
-                signature: submitterName,
-                opinion: '方案编制完成，提交审核。',
-              }
-            : n
-        );
+        const nextRound = (Math.max(...p.approvalNodes.map((n) => n.round || 1), 1)) + 1;
+
+        const isResubmit = !!p.lastRejection;
+        let nodes: ApprovalNode[];
+
+        if (isResubmit && p.lastRejection) {
+          const rejectOrderIndex = p.approvalNodes.find((n) => n.id === p.lastRejection!.nodeId)?.orderIndex ?? 1;
+          nodes = p.approvalNodes.map((n) => {
+            if (n.orderIndex < rejectOrderIndex) {
+              return n;
+            }
+            if (n.id === p.lastRejection!.nodeId) {
+              return { ...n, action: 'pending' as const, timestamp: undefined, signature: undefined, opinion: undefined, round: nextRound };
+            }
+            if (n.orderIndex > rejectOrderIndex) {
+              return { ...n, action: 'pending' as const, timestamp: undefined, signature: undefined, opinion: undefined, round: nextRound };
+            }
+            return n;
+          });
+
+          const techLeadNode = nodes.find((n) => n.role === '项目技术负责人');
+          if (techLeadNode && techLeadNode.orderIndex < rejectOrderIndex) {
+            nodes = nodes.map((n) =>
+              n.id === techLeadNode.id
+                ? { ...n, action: 'approved' as const, timestamp: now(), signature: submitterName, opinion: `修改后重新提交${resubmitNote ? '：' + resubmitNote : ''}`, round: n.round }
+                : n
+            );
+          }
+        } else {
+          nodes = p.approvalNodes.map((n, i) =>
+            i === 0
+              ? {
+                  ...n,
+                  action: 'approved' as const,
+                  timestamp: now(),
+                  signature: submitterName,
+                  opinion: '方案编制完成，提交审核。',
+                  round: n.round || 1,
+                }
+              : { ...n, round: n.round || 1 }
+          );
+        }
+
+        const resubmitLog = isResubmit
+          ? {
+              id: generateId(),
+              planId: p.id,
+              modifierName: submitterName,
+              description: `修改后重新提交审核${resubmitNote ? '：' + resubmitNote : ''}`,
+              timestamp: now(),
+              isResubmit: true,
+            }
+          : null;
+
         return {
           ...p,
           approvalNodes: nodes,
           status: determineStatus(nodes, p.needExpertReview, p.expertReviewDone, p.disclosureUploaded),
+          modificationLogs: resubmitLog ? [...p.modificationLogs, resubmitLog] : p.modificationLogs,
+          lastRejection: undefined,
+          resubmitNote: resubmitNote || undefined,
           updatedAt: now(),
         };
       }),
@@ -331,13 +390,20 @@ export const usePlanStore = create<PlanState>((set, get) => ({
           approvalNodes: nodes,
           status: 'draft' as PlanStatus,
           modificationLogs: [...p.modificationLogs, newLog],
+          lastRejection: {
+            nodeId,
+            role: rejectedNode?.role || '项目经理',
+            opinion,
+            rejecterName,
+            timestamp: now(),
+          },
           updatedAt: now(),
         };
       }),
     }));
   },
 
-  uploadExpertReview: (planId, uploaderName) => {
+  uploadExpertReview: (planId, uploaderName, fileMeta?) => {
     set((state) => ({
       plans: state.plans.map((p) => {
         if (p.id !== planId) return p;
@@ -349,10 +415,14 @@ export const usePlanStore = create<PlanState>((set, get) => ({
                 : n
             )
           : p.approvalNodes;
+        const newAtt: Attachment | null = fileMeta
+          ? { ...fileMeta, id: generateId(), uploadedAt: now(), category: 'expert_review' }
+          : { id: generateId(), fileName: '专家论证报告.pdf', fileType: 'pdf', fileSize: 0, uploadedAt: now(), category: 'expert_review' as AttachmentCategory };
         return {
           ...p,
           approvalNodes: nodes,
           expertReviewDone: true,
+          attachments: [...p.attachments, newAtt],
           status: determineStatus(nodes, true, true, p.disclosureUploaded),
           updatedAt: now(),
         };
@@ -360,13 +430,24 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     }));
   },
 
-  uploadDisclosure: (planId, uploaderName) => {
+  uploadDisclosure: (planId, uploaderName, fileMeta?) => {
     set((state) => ({
       plans: state.plans.map((p) => {
         if (p.id !== planId) return p;
+        const newAtt: Attachment = fileMeta
+          ? { ...fileMeta, id: generateId(), uploadedAt: now(), category: 'disclosure' }
+          : { id: generateId(), fileName: '安全交底记录.pdf', fileType: 'pdf', fileSize: 0, uploadedAt: now(), category: 'disclosure' as AttachmentCategory };
+        const allApproved = p.approvalNodes.every((n) => n.action === 'approved' || n.role === '专家论证');
+        const nodes = allApproved
+          ? p.approvalNodes
+          : p.approvalNodes.map((n) =>
+              n.action === 'pending' ? { ...n, action: 'approved' as const, timestamp: now(), signature: uploaderName, opinion: '审批通过。' } : n
+            );
         return {
           ...p,
+          approvalNodes: nodes,
           disclosureUploaded: true,
+          attachments: [...p.attachments, newAtt],
           status: 'disclosed' as PlanStatus,
           updatedAt: now(),
         };
